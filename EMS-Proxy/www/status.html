@@ -19,6 +19,7 @@
   .hm-err   { background: #f5a3a3; }  /* Transportfehler */
   .hm-stale { background: #e0e0e0; }  /* noch kein Wert */
   td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
+  .not-set { color: #c80; font-weight: bold; }
 
   /* Layout oben: links Tabelle, Mitte Power, rechts SOC */
   .layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
@@ -106,8 +107,12 @@
     <tr><td>BLUESUN Capacity</td><td id="split_cap_b" class="val"></td></tr>
     <tr><td>Tesvolt SOC</td><td id="split_soc_t" class="val"></td></tr>
     <tr><td>BLUESUN SOC</td><td id="split_soc_b" class="val"></td></tr>
+    <tr><td>Netz max. Laden</td><td id="split_grid_chg" class="val"></td></tr>
+    <tr><td>Netz max. Entladen</td><td id="split_grid_dis" class="val"></td></tr>
+    <tr><td>EMS-Limitquelle (40003/40004)</td><td id="split_grid_ems" class="val"></td></tr>
     </tbody>
     </table>
+    <small style="color:#666;">Netzlimit wird nur im Split Mode durchgesetzt (Minimum aus Setup-Wert und EMS-Register).</small>
   </div>
 
   <!-- ================= MITTLERE SPALTE: Power-Anzeige ================= -->
@@ -505,8 +510,20 @@ function loadMode() {
     });
 }
 
+function setGridCell(id, v, suffix) {
+  var el = document.getElementById(id);
+  if (v === "" || v === undefined) {
+    el.innerText = "nicht gesetzt!";
+    el.className = "val not-set";
+  } else {
+    el.innerText = v + (suffix || "");
+    el.className = "val";
+  }
+}
+
 function loadParams() {
-  ["split_mode", "cap_t", "cap_b", "ip_t", "ip_b"].forEach(function (name) {
+  ["split_mode", "cap_t", "cap_b", "ip_t", "ip_b",
+   "grid_max_chg", "grid_max_dis", "grid_use_ems"].forEach(function (name) {
     fetch("/cgi-bin/get_param.cgi?name=" + name)
       .then(function (r) { return r.text(); })
       .then(function (v) {
@@ -514,6 +531,11 @@ function loadParams() {
         if (name === "split_mode") document.getElementById("split_mode_display").innerText = v;
         if (name === "cap_t") document.getElementById("split_cap_t").innerText = v + " kWh";
         if (name === "cap_b") document.getElementById("split_cap_b").innerText = v + " kWh";
+        if (name === "grid_max_chg") setGridCell("split_grid_chg", v, " kW");
+        if (name === "grid_max_dis") setGridCell("split_grid_dis", v, " kW");
+        if (name === "grid_use_ems") {
+          document.getElementById("split_grid_ems").innerText = (v === "1") ? "aktiv (min mit Setup-Wert)" : "aus";
+        }
         if (name === "ip_t" || name === "ip_b") {
           var el = document.getElementById("cfg_display");
           el.setAttribute("data-" + name, v);
