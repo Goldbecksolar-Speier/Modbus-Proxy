@@ -105,6 +105,7 @@ log "Quelle: $SRC"
 cp "$SRC/usr/bin/modbus_proxy.lua"  "$BIN/" || fail "copy modbus_proxy.lua"
 cp "$SRC/usr/bin/powersplit.lua"    "$BIN/" || fail "copy powersplit.lua"
 cp "$SRC/usr/bin/ems_watchdog.sh"   "$BIN/" || fail "copy ems_watchdog.sh"
+cp "$SRC/usr/bin/mb_cli.lua"        "$BIN/" || fail "copy mb_cli.lua"
 [ -f "$SRC/usr/bin/github_update.sh" ] && cp "$SRC/usr/bin/github_update.sh" "$BIN/"
 cp "$SRC/etc/init.d/ems_watchdog"   /etc/init.d/ || fail "copy init.d/ems_watchdog"
 cp "$SRC"/cgi-bin/*.cgi             "$WEB/cgi-bin/" || fail "copy cgi-bin"
@@ -136,7 +137,7 @@ done
 log "Konfigdatei-Rechte fuer uhttpd-User gesetzt"
 
 # --- 4. Rechte ---------------------------------------------------------------
-chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua \
+chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua "$BIN"/mb_cli.lua \
          "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh \
          /etc/init.d/ems_watchdog "$WEB"/cgi-bin/*.cgi 2>/dev/null
 
