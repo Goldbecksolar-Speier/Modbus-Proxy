@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>EMS Proxy Status</title></head>
+<body>
+<h1>EMS Proxy Status</h1>
+
+<div id="mode_display">Loading mode...</div>
+
+<h2>TESVOLT EMS Registers</h2>
+<table id="ems_table" border="1">
+<thead><tr><th>Reg</th><th>Tesvolt</th><th>BLUESUN</th><th>Value</th><th>Status</th></tr></thead>
+<tbody></tbody>
+</table>
+
+<h2>PowerSplit Calculation</h2>
+<table id="split_table" border="1">
+<tbody>
+<tr><td>Split Mode</td><td id="split_mode_display"></td></tr>
+<tr><td>Tesvolt Capacity</td><td id="split_cap_t"></td></tr>
+<tr><td>BLUESUN Capacity</td><td id="split_cap_b"></td></tr>
+<tr><td>Tesvolt SOC</td><td id="split_soc_t"></td></tr>
+<tr><td>BLUESUN SOC</td><td id="split_soc_b"></td></tr>
+</tbody>
+</table>
+
+<h2>SOC Bars</h2>
+Tesvolt:
+<div style="width:300px;height:20px;background:#ccc;">
+  <div id="soc_t_fill" style="height:20px;width:0;background:blue;"></div>
+</div>
+BLUESUN:
+<div style="width:300px;height:20px;background:#ccc;">
+  <div id="soc_b_fill" style="height:20px;width:0;background:green;"></div>
+</div>
+
+<script>
+// Register-Mapping Tesvolt EMS <-> BLUESUN (siehe docs/Register-Mapping.md)
+var EMS_MAP = [
+  { reg: 30001, tesvolt: "SOC_T",            bluesun: "SOC_B (0x1140)" },
+  { reg: 30003, tesvolt: "Voltage_T",        bluesun: "Voltage_B (0x3601 x0.1)" },
+  { reg: 30004, tesvolt: "Current_T",        bluesun: "Current_B (0x3602 x0.1)" },
+  { reg: 30005, tesvolt: "Power_T",          bluesun: "PCS Power (0x1128 x0.01)" },
+  { reg: 30007, tesvolt: "Status_T",         bluesun: "Status_B (0x1100)" },
+  { reg: 30008, tesvolt: "Error_T",          bluesun: "Error_B (0x1010)" },
+  { reg: 30020, tesvolt: "Capacity_T",       bluesun: "Capacity_B (0x3619 x0.1)" },
+  { reg: 40003, tesvolt: "ChargeLimit_T",    bluesun: "ChargeLimit_B (0x361D x100)" },
+  { reg: 40004, tesvolt: "DischargeLimit_T", bluesun: "DchgLimit_B (0x361F x100)" }
+];
+
+var currentMode = "passthrough";
+
+function loadMode() {
+  return fetch("/cgi-bin/get_mode.cgi")
+    .then(function (r) { return r.text(); })
+    .then(function (mode) {
+      currentMode = mode.trim();
+      document.getElementById("mode_display").innerText =
+        (currentMode === "split")
+          ? "Split Mode (Tesvolt + BLUESUN active)"
+          : "Passthrough Mode (Tesvolt only)";
+    })
+    .catch(function () {
+      document.getElementById("mode_display").innerText =
+        "Error reading mode (default: passthrough)";
+    });
+}
+
+function addRow(tbody, reg, tes, blue, value, statusText, ok) {
+  var tr = document.createElement("tr");
+  tr.innerHTML =
+    "<td>" + reg + "</td>" +
+    "<td>" + tes + "</td>" +
+    "<td>" + blue + "</td>" +
+    "<td>" + value + "</td>" +
+    "<td style='color:" + (ok ? "green" : "red") + "'>" + statusText + "</td>";
+  tbody.appendChild(tr);
+}
+
+function loadEMS() {
+  var tbody = document.querySelector("#ems_table tbody");
+  tbody.innerHTML = "";
+  EMS_MAP.forEach(function (entry) {
+    fetch("/cgi-bin/read_reg.cgi?reg=" + entry.reg)
+      .then(function (r) { return r.text(); })
+      .then(function (value) {
+        value = value.trim();
+        var missing = (value === "NOT_FOUND");
+        if (missing) {
+          fetch("/cgi-bin/add_reg_to_config.cgi?reg=" + entry.reg)
+            .catch(function () {});
+        }
+        addRow(tbody, entry.reg, entry.tesvolt, entry.bluesun,
+               missing ? "-" : value,
+               missing ? "Not in config -> added" : "OK",
+               !missing);
+        if (entry.reg === 30001 && !missing) {
+          var soc = parseInt(value, 10);
+          if (!isNaN(soc)) {
+            document.getElementById("soc_t_fill").style.width = (soc * 3) + "px";
+            document.getElementById("split_soc_t").innerText = soc + " %";
+          }
+        }
+      })
+      .catch(function () {
+        addRow(tbody, entry.reg, entry.tesvolt, entry.bluesun, "-", "Error reading", false);
+      });
+  });
+}
+
+function loadSplitParams() {
+  fetch("/cgi-bin/get_param.cgi?name=split_mode")
+    .then(function (r) { return r.text(); })
+    .then(function (v) { document.getElementById("split_mode_display").innerText = v.trim(); })
+    .catch(function () {});
+  fetch("/cgi-bin/get_param.cgi?name=cap_t")
+    .then(function (r) { return r.text(); })
+    .then(function (v) { document.getElementById("split_cap_t").innerText = v.trim() + " kWh"; })
+    .catch(function () {});
+  fetch("/cgi-bin/get_param.cgi?name=cap_b")
+    .then(function (r) { return r.text(); })
+    .then(function (v) { document.getElementById("split_cap_b").innerText = v.trim() + " kWh"; })
+    .catch(function () {});
+}
+
+function refresh() {
+  loadMode().then(function () {
+    loadEMS();
+    loadSplitParams();
+  });
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+
+</body>
+</html>

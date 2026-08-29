@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>EMS Proxy Setup</title></head>
+<body>
+<h1>EMS Proxy Setup</h1>
+
+<div>
+  <h3>Power Mode</h3>
+  <label><input type="checkbox" id="mode_split"> Split Mode</label>
+</div>
+
+<div>
+  <h3>Battery Configuration</h3>
+  Tesvolt Capacity (kWh): <input id="cap_t" type="number" min="0"><br>
+  BLUESUN Capacity (kWh): <input id="cap_b" type="number" min="0"><br>
+  Split Mode:
+  <select id="split_mode">
+    <option value="capacity">Capacity</option>
+    <option value="soc">SOC</option>
+  </select>
+</div>
+
+<div>
+  <h3>Modbus / IP</h3>
+  Tesvolt IP: <input id="ip_tesvolt" type="text"><br>
+  BLUESUN IP: <input id="ip_bluesun" type="text"><br>
+</div>
+
+<div>
+  <button id="save_btn">Speichern</button>
+  <span id="save_status"></span>
+</div>
+
+<script>
+function loadConfig() {
+  fetch("/cgi-bin/get_mode.cgi")
+    .then(function (r) { return r.text(); })
+    .then(function (mode) {
+      document.getElementById("mode_split").checked = (mode.trim() === "split");
+    })
+    .catch(function () {});
+
+  ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b"].forEach(function (name) {
+    fetch("/cgi-bin/get_param.cgi?name=" + name)
+      .then(function (r) { return r.text(); })
+      .then(function (v) {
+        v = v.trim();
+        if (name === "cap_t") document.getElementById("cap_t").value = v;
+        if (name === "cap_b") document.getElementById("cap_b").value = v;
+        if (name === "split_mode") document.getElementById("split_mode").value = v;
+        if (name === "ip_t") document.getElementById("ip_tesvolt").value = v;
+        if (name === "ip_b") document.getElementById("ip_bluesun").value = v;
+      })
+      .catch(function () {});
+  });
+}
+
+function saveConfig() {
+  var mode  = document.getElementById("mode_split").checked ? "split" : "passthrough";
+  var split = document.getElementById("split_mode").value;
+  var capT  = document.getElementById("cap_t").value;
+  var capB  = document.getElementById("cap_b").value;
+  var ipT   = document.getElementById("ip_tesvolt").value;
+  var ipB   = document.getElementById("ip_bluesun").value;
+
+  Promise.all([
+    fetch("/cgi-bin/set_mode.cgi?mode=" + mode),
+    fetch("/cgi-bin/set_split.cgi?split=" + split),
+    fetch("/cgi-bin/set_params.cgi?cap_t=" + capT + "&cap_b=" + capB),
+    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB)
+  ])
+    .then(function () {
+      document.getElementById("save_status").innerText = "Gespeichert.";
+    })
+    .catch(function () {
+      document.getElementById("save_status").innerText = "Fehler beim Speichern!";
+    });
+}
+
+document.getElementById("save_btn").addEventListener("click", saveConfig);
+loadConfig();
+</script>
+
+</body>
+</html>
