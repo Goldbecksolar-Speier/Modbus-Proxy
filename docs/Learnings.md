@@ -20,6 +20,11 @@
 | 2026-08-29 | Alt-Code | Watchdog nutzte killall und hatte keinen Failsafe | Alter Stand | Ersetzt: PID-Kill + Failsafe + Logrotation 500 kB |
 | 2026-08-29 | RUTOS | Projektdoku nutzt systemd-Pfade, RUTOS ist aber OpenWrt (procd/init.d) | Doku-Annahme | /etc/init.d/ems_watchdog als procd-Skript erstellen (naechster Schritt) |
 | 2026-08-29 | Doku-Prozess | Learnings und alle PowerShell-Aufrufe werden ab sofort strukturiert festgehalten | User-Vorgabe 2026-08-29 | Learnings hier als Ledger; PowerShell-Aufrufe in docs/PowerShell-Log.md |
+| 2026-08-29 | RUTOS | init.d-Skript umgesetzt: /etc/init.d/ems_watchdog (rc.common, START=95, STOP=10, PID-basierter Stop) | RUTOS = OpenWrt, kein systemd | Installer nutzt jetzt /etc/init.d/ems_watchdog enable + restart; systemd-Unit bleibt nur als Referenz im Repo; spaeter optional procd (USE_PROCD=1) |
+| 2026-08-29 | Konfiguration | Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo | User-Vorgabe: vor Merge nichts fest eintragen | Konfiguration nur ueber Setup-UI (setup.html -> set_ips.cgi/set_params.cgi); Fallback-IPs aus modbus_proxy.lua entfernt |
+| 2026-08-29 | Sicherheit | Proxy im unkonfigurierten Zustand darf nicht gegen Default-IPs senden | Fallback-IPs 192.168.1.40/50 koennten fremde Geraete treffen | Ohne /etc/tesvolt_ip_t antwortet der Proxy mit Modbus-Exception 0x0A (Gateway Path Unavailable) und loggt Warnung; IPs werden pro Request nachgeladen (Aktivierung ohne Neustart) |
+| 2026-08-29 | Dependencies | modbus_proxy.lua benoetigt luasocket (require 'socket') | Nicht Teil der RUTOS-Standardinstallation | Installer prueft opkg list-installed und installiert bei Bedarf: opkg update && opkg install luasocket |
+| 2026-08-29 | Verifikation | Tesvolt-Register SOC 9/10, Power 11/12, Watchdog 12/13 noch NICHT am Geraet verifiziert | Kein Router-/Anlagenzugriff aus der Entwicklungsumgebung | Verifikationsplan in docs/Umsetzungsplan.md Schritt 3; Ergebnisse hier als neue Zeilen nachtragen |
 
 ## Regeln (dauerhaft gueltig)
 
@@ -28,3 +33,4 @@
 3. Doku und Learnings als Markdown in docs/.
 4. Keine automatischen Aenderungen an produktiven Systemen; Aenderungen vorher erklaeren.
 5. Jeder PowerShell-Aufruf wird in docs/PowerShell-Log.md dokumentiert (Datum, Befehl, Exitcode, Fehler, Korrektur).
+6. Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo - Konfiguration nur ueber die Setup-UI.
