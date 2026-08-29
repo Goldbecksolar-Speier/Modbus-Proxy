@@ -6,14 +6,12 @@
 #  * repariert fehlende Konfigdateien
 #  * einfache Logrotation (max. 500 kB)
 #  * kill per PID statt killall (sauberer auf BusyBox)
+#  * KEINE Fallback-IPs: ohne /etc/tesvolt_ip_t/_b werden die
+#    entsprechenden Checks uebersprungen (Proxy ist dann im Schutzmodus)
 # =====================================================================
 
 LOG="/var/log/ems_watchdog.log"
-PROXY="/usr/bin/modbus_proxy.lua"
-BLUESUN_IP=$(cat /etc/tesvolt_ip_b 2>/dev/null)
-BLUESUN_IP=${BLUESUN_IP:-192.168.1.50}
-TESVOLT_IP=$(cat /etc/tesvolt_ip_t 2>/dev/null)
-TESVOLT_IP=${TESVOLT_IP:-192.168.1.40}
+PROXY="/usr/local/bin/modbus_proxy.lua"
 
 BS_FAIL=0
 BS_FAIL_LIMIT=3
@@ -36,21 +34,27 @@ restart_proxy() {
         kill "$P" 2>/dev/null
     done
     sleep 1
-    $PROXY &
+    "$PROXY" &
     sleep 2
 }
 
 failsafe() {
+    BLUESUN_IP=$(cat /etc/tesvolt_ip_b 2>/dev/null)
+    [ -z "$BLUESUN_IP" ] && return
     logmsg "FAILSAFE: $1 -> passthrough + SetPower_B=0"
     echo "passthrough" > /etc/tesvolt_proxy_mode
     # SetPower_B (0x1144 = 4420) auf 0 setzen
     modbus_cli tcp "$BLUESUN_IP" -u 1 -w 4420 -v 0 2>/dev/null
 }
 
-logmsg "Watchdog gestartet (Tesvolt=$TESVOLT_IP, BLUESUN=$BLUESUN_IP)"
+logmsg "Watchdog gestartet"
 
 while true; do
     rotate_log
+
+    # IPs bei jedem Durchlauf frisch lesen (Setup-UI kann sie jederzeit setzen)
+    TESVOLT_IP=$(cat /etc/tesvolt_ip_t 2>/dev/null)
+    BLUESUN_IP=$(cat /etc/tesvolt_ip_b 2>/dev/null)
 
     # 1) Proxy-Prozess pruefen
     if ! pgrep -f "modbus_proxy.lua" >/dev/null; then
@@ -58,14 +62,17 @@ while true; do
     fi
 
     # 2) Tesvolt EMS-Link: SOC (Register 30001) ueber den Proxy lesen
-    SOC_T=$(modbus_cli tcp 127.0.0.1 -p 1502 -u 1 -r 30001 -t s16 2>/dev/null)
-    if [ -z "$SOC_T" ]; then
-        restart_proxy "Tesvolt EMS/Proxy antwortet nicht"
+    #    Nur wenn IPs konfiguriert sind (sonst antwortet der Proxy mit 0x0A)
+    if [ -n "$TESVOLT_IP" ]; then
+        SOC_T=$(modbus_cli tcp 127.0.0.1 -p 1502 -u 1 -r 30001 -t s16 2>/dev/null)
+        if [ -z "$SOC_T" ]; then
+            restart_proxy "Tesvolt EMS/Proxy antwortet nicht"
+        fi
     fi
 
     # 3) BLUESUN PCS-Link: SOC (0x1140 = 4416) - nur im Split-Modus relevant
     MODE=$(cat /etc/tesvolt_proxy_mode 2>/dev/null)
-    if [ "$MODE" = "split" ]; then
+    if [ "$MODE" = "split" ] && [ -n "$BLUESUN_IP" ]; then
         SOC_B=$(modbus_cli tcp "$BLUESUN_IP" -u 1 -r 4416 -t s16 2>/dev/null)
         if [ -z "$SOC_B" ]; then
             BS_FAIL=$((BS_FAIL + 1))

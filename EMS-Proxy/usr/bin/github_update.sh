@@ -4,16 +4,24 @@
 # fuer Teltonika RUTX11 (RUTOS/BusyBox, kein git noetig)
 #
 # Aufruf:
-#   github_update.sh [branch]      (Default: main)
-#   z.B.: github_update.sh feature/optimierung
+#   /usr/local/bin/github_update.sh [branch]      (Default: main)
+#   z.B.: /usr/local/bin/github_update.sh feature/optimierung
+#
+# WICHTIG - RUTOS-Dateisystem:
+#   / ist squashfs (READ-ONLY). Beschreibbar sind nur /etc und /usr/local
+#   (Overlay) sowie /tmp und /var (RAM). Deshalb:
+#     Skripte  -> /usr/local/bin/
+#     Web-UI   -> /usr/local/www/  (eigene uhttpd-Instanz, Port 8080)
+#     Konfig   -> /etc/tesvolt_*
 #
 # Privates Repo: Token in /etc/github_token ablegen (chmod 600).
 #   Das Token NIEMALS ins Repo committen!
 #
 # Verhalten:
+#   * curl bevorzugt (BusyBox-wget kann keine HTTP-Header!)
 #   * Download als Tarball nach /tmp (RAM, kein Flash-Verschleiss)
-#   * Konfigdateien (/etc/tesvolt_*) werden NIE ueberschrieben,
-#     nur angelegt falls sie fehlen (IPs/Kapazitaeten bleiben erhalten)
+#   * Konfigdateien (/etc/tesvolt_*) werden NIE ueberschrieben
+#   * uhttpd-Instanz 'emsproxy' (Port 8080) wird bei Bedarf angelegt
 #   * Dienste werden nach dem Update neu gestartet
 #   * Log nach /var/log/ems_proxy.log
 # =====================================================================
@@ -26,6 +34,9 @@ LOGFILE="/var/log/ems_proxy.log"
 WORKDIR="/tmp/mp_update"
 TARBALL="/tmp/mp_update.tar.gz"
 
+BIN=/usr/local/bin
+WEB=/usr/local/www
+
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') UPDATE: $1" | tee -a "$LOGFILE"
 }
@@ -36,44 +47,62 @@ fail() {
     exit 1
 }
 
+# Download-Funktion: curl bevorzugen, BusyBox-wget kann keine Header
+fetch() {
+    # $1=URL $2=Zieldatei [$3=Token]
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "$3" ]; then
+            curl -fsSL -H "Authorization: token $3" -o "$2" "$1"
+        else
+            curl -fsSL -o "$2" "$1"
+        fi
+    else
+        if [ -n "$3" ]; then
+            wget -q --header="Authorization: token $3" -O "$2" "$1"
+        else
+            wget -q -O "$2" "$1"
+        fi
+    fi
+}
+
 log "Starte Update von $OWNER/$REPO Branch '$BRANCH'"
 
-# --- 1. Download -------------------------------------------------------
+# --- 0. Schreibbarkeit pruefen ------------------------------------------
+mkdir -p "$BIN" "$WEB/cgi-bin" 2>/dev/null
+touch "$BIN/.wtest" 2>/dev/null || fail "$BIN nicht beschreibbar - df -h pruefen"
+rm -f "$BIN/.wtest"
+
+# --- 1. Download -----------------------------------------------------------
 rm -rf "$WORKDIR" "$TARBALL"
 mkdir -p "$WORKDIR"
 
 if [ -f "$TOKEN_FILE" ]; then
     TOKEN=$(cat "$TOKEN_FILE")
     log "Token gefunden - nutze API-Tarball (privates Repo)"
-    URL="https://api.github.com/repos/$OWNER/$REPO/tarball/$BRANCH"
-    wget -q --header="Authorization: token $TOKEN" -O "$TARBALL" "$URL" \
-        || curl -fsSL -H "Authorization: token $TOKEN" -o "$TARBALL" "$URL" \
-        || fail "Download fehlgeschlagen (Token/Netz pruefen): $URL"
+    fetch "https://api.github.com/repos/$OWNER/$REPO/tarball/$BRANCH" "$TARBALL" "$TOKEN" \
+        || fail "Download fehlgeschlagen (Token/Netz pruefen)"
 else
-    URL="https://github.com/$OWNER/$REPO/archive/refs/heads/$BRANCH.tar.gz"
-    wget -q -O "$TARBALL" "$URL" \
-        || curl -fsSL -o "$TARBALL" "$URL" \
-        || fail "Download fehlgeschlagen (Repo privat? Token nach $TOKEN_FILE legen): $URL"
+    fetch "https://github.com/$OWNER/$REPO/archive/refs/heads/$BRANCH.tar.gz" "$TARBALL" "" \
+        || fail "Download fehlgeschlagen (Repo privat? Token nach $TOKEN_FILE legen)"
 fi
 
 [ -s "$TARBALL" ] || fail "Tarball leer: $TARBALL"
 
-# --- 2. Entpacken -------------------------------------------------------
+# --- 2. Entpacken -----------------------------------------------------------
 tar -xzf "$TARBALL" -C "$WORKDIR" || fail "Entpacken fehlgeschlagen"
 
-# Tarball-Wurzelordner ermitteln (Name variiert je nach Download-Weg)
 SRC=$(find "$WORKDIR" -maxdepth 2 -type d -name "EMS-Proxy" | head -n 1)
 [ -n "$SRC" ] || fail "EMS-Proxy-Ordner im Tarball nicht gefunden"
 log "Quelle: $SRC"
 
-# --- 3. Dateien installieren ---------------------------------------------
-cp "$SRC/usr/bin/modbus_proxy.lua"  /usr/bin/ || fail "copy modbus_proxy.lua"
-cp "$SRC/usr/bin/powersplit.lua"    /usr/bin/ || fail "copy powersplit.lua"
-cp "$SRC/usr/bin/ems_watchdog.sh"   /usr/bin/ || fail "copy ems_watchdog.sh"
-[ -f "$SRC/usr/bin/github_update.sh" ] && cp "$SRC/usr/bin/github_update.sh" /usr/bin/
+# --- 3. Dateien installieren (nur beschreibbare Pfade!) -----------------------
+cp "$SRC/usr/bin/modbus_proxy.lua"  "$BIN/" || fail "copy modbus_proxy.lua"
+cp "$SRC/usr/bin/powersplit.lua"    "$BIN/" || fail "copy powersplit.lua"
+cp "$SRC/usr/bin/ems_watchdog.sh"   "$BIN/" || fail "copy ems_watchdog.sh"
+[ -f "$SRC/usr/bin/github_update.sh" ] && cp "$SRC/usr/bin/github_update.sh" "$BIN/"
 cp "$SRC/etc/init.d/ems_watchdog"   /etc/init.d/ || fail "copy init.d/ems_watchdog"
-cp "$SRC"/cgi-bin/*.cgi             /www/cgi-bin/ || fail "copy cgi-bin"
-cp "$SRC"/www/*.html                /www/ || fail "copy www"
+cp "$SRC"/cgi-bin/*.cgi             "$WEB/cgi-bin/" || fail "copy cgi-bin"
+cp "$SRC"/www/*.html                "$WEB/" || fail "copy www"
 
 # Konfigdateien: NUR anlegen wenn nicht vorhanden (nie ueberschreiben!)
 for f in "$SRC"/etc/tesvolt_*; do
@@ -85,22 +114,34 @@ for f in "$SRC"/etc/tesvolt_*; do
     fi
 done
 
-# --- 4. Rechte + Dienste --------------------------------------------------
-chmod +x /usr/bin/modbus_proxy.lua /usr/bin/powersplit.lua \
-         /usr/bin/ems_watchdog.sh /usr/bin/github_update.sh \
-         /etc/init.d/ems_watchdog /www/cgi-bin/*.cgi 2>/dev/null
+# --- 4. Rechte ---------------------------------------------------------------
+chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua \
+         "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh \
+         /etc/init.d/ems_watchdog "$WEB"/cgi-bin/*.cgi 2>/dev/null
 
-# luasocket sicherstellen
+# --- 5. uhttpd-Instanz fuer die Web-UI (Port 8080) ---------------------------
+if ! uci -q get uhttpd.emsproxy >/dev/null 2>&1; then
+    log "Lege uhttpd-Instanz 'emsproxy' an (Port 8080, Home $WEB)"
+    uci set uhttpd.emsproxy=uhttpd
+    uci add_list uhttpd.emsproxy.listen_http='0.0.0.0:8080'
+    uci set uhttpd.emsproxy.home="$WEB"
+    uci set uhttpd.emsproxy.cgi_prefix='/cgi-bin'
+    uci commit uhttpd
+    /etc/init.d/uhttpd restart
+fi
+
+# --- 6. luasocket sicherstellen -----------------------------------------------
 if ! opkg list-installed 2>/dev/null | grep -qi luasocket; then
     log "luasocket fehlt - installiere via opkg"
     opkg update >/dev/null 2>&1
     opkg install luasocket >/dev/null 2>&1 || log "WARNUNG: luasocket-Installation fehlgeschlagen"
 fi
 
+# --- 7. Dienste ----------------------------------------------------------------
 /etc/init.d/ems_watchdog enable  2>/dev/null
-/etc/init.d/ems_watchdog restart 2>/dev/null || /usr/bin/ems_watchdog.sh &
+/etc/init.d/ems_watchdog restart 2>/dev/null || "$BIN/ems_watchdog.sh" &
 
-# --- 5. Aufraeumen ----------------------------------------------------------
+# --- 8. Aufraeumen ---------------------------------------------------------------
 rm -rf "$WORKDIR" "$TARBALL"
 log "Update abgeschlossen (Branch '$BRANCH')"
-echo "OK - Update auf Branch '$BRANCH' abgeschlossen. Log: $LOGFILE"
+echo "OK - Update abgeschlossen. Web-UI: http://<ROUTER-IP>:8080/setup.html  Log: $LOGFILE"

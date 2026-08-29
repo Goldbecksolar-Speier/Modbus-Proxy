@@ -2,20 +2,21 @@
 # =====================================================================
 # EMS-Watchdog Init-Skript fuer RUTOS (OpenWrt rc.common)
 # Installation: /etc/init.d/ems_watchdog enable && /etc/init.d/ems_watchdog start
-# Hinweis: spaeter ggf. auf procd umstellen (USE_PROCD=1)
+# Hinweis: Skripte liegen in /usr/local/bin (/ ist squashfs read-only!)
 # =====================================================================
 
 START=95
 STOP=10
 
 PIDFILE=/var/run/ems_watchdog.pid
+DAEMON=/usr/local/bin/ems_watchdog.sh
 
 start() {
     if [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
         echo "ems_watchdog laeuft bereits (PID $(cat $PIDFILE))"
         return 0
     fi
-    /usr/bin/ems_watchdog.sh &
+    "$DAEMON" &
     echo $! > "$PIDFILE"
     echo "ems_watchdog gestartet (PID $(cat $PIDFILE))"
 }
