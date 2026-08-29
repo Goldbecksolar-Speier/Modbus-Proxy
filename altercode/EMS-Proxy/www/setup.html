@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>EMS Proxy Setup</title></head>
+<body>
+<h1>EMS Proxy Setup</h1>
+
+<div>
+  <h3>Power Mode</h3>
+  <label><input type="checkbox" id="mode_split"> Split Mode</label>
+</div>
+
+<div>
+  <h3>Battery Configuration</h3>
+  Tesvolt Capacity (kWh): <input id="cap_t" type="number"><br>
+  BLUESUN Capacity (kWh): <input id="cap_b" type="number"><br>
+  Split Mode:
+  <select id="split_mode">
+    <option value="capacity">Capacity</option>
+    <option value="soc">SOC</option>
+  </select>
+</div>
+
+<div>
+  <h3>Modbus / IP</h3>
+  Tesvolt IP: <input id="ip_tesvolt" type="text"><br>
+  BLUESUN IP: <input id="ip_bluesun" type="text"><br>
+</div>
+
+</body>
+</html>

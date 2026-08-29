@@ -1,0 +1,11 @@
+[Unit]
+Description=EMS Proxy Watchdog
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/ems_watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>EMS Proxy Status</title></head>
+<body>
+<h1>EMS Proxy Status</h1>
+
+<div id="mode_display"></div>
+
+<h2>TESVOLT EMS Registers</h2>
+<table id="ems_table" border="1">
+<thead><tr><th>Reg</th><th>Tesvolt</th><th>BLUESUN</th><th>Value</th><th>Status</th></tr></thead>
+<tbody></tbody>
+</table>
+
+<h2>PowerSplit Calculation</h2>
+<table id="split_table" border="1">
+<tbody>
+<tr><td>Split Mode</td><td id="split_mode_display"></td></tr>
+<tr><td>Tesvolt Capacity</td><td id="split_cap_t"></td></tr>
+<tr><td>BLUESUN Capacity</td><td id="split_cap_b"></td></tr>
+<tr><td>Tesvolt SOC</td><td id="split_soc_t"></td></tr>
+<tr><td>BLUESUN SOC</td><td id="split_soc_b"></td></tr>
+<tr><td>Tesvolt Energy</td><td id="split_energy_t"></td></tr>
+<tr><td>BLUESUN Energy</td><td id="split_energy_b"></td></tr>
+<tr><td>Tesvolt Share</td><td id="split_pt"></td></tr>
+<tr><td>BLUESUN Share</td><td id="split_pb"></td></tr>
+<tr><td>Combined Power</td><td id="split_combined"></td></tr>
+</tbody>
+</table>
+
+<h2>SOC Bars</h2>
+<div id="soc_t_bar" style="width:300px;height:20px;background:#ccc;">
+  <div id="soc_t_fill" style="height:20px;width:0;background:blue;"></div>
+</div>
+<div id="soc_b_bar" style="width:300px;height:20px;background:#ccc;">
+  <div id="soc_b_fill" style="height:20px;width:0;background:green;"></div>
+</div>
+<div id="soc_c_bar" style="width:300px;height:20px;background:#ccc;">
+  <div id="soc_c_fill" style="height:20px;width:0;background:purple;"></div>
+</div>
+
+</body>
+</html>
