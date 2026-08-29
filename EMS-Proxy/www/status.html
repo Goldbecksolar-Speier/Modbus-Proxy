@@ -13,17 +13,38 @@
   table { border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
   th, td { border: 1px solid #ccc; padding: 6px 12px; text-align: left; }
   th { background: #1a3e6e; color: #fff; }
-  /* Heatmap-Zellen */
-  td.hm-ok    { background: #b7e4b0; }  /* Wert frisch gelesen */
-  td.hm-warn  { background: #ffe08a; }  /* Exception / unkonfiguriert */
-  td.hm-err   { background: #f5a3a3; }  /* Transportfehler */
-  td.hm-stale { background: #e0e0e0; }  /* noch kein Wert */
+  /* Heatmap-Farben */
+  .hm-ok    { background: #b7e4b0; }  /* Wert frisch gelesen */
+  .hm-warn  { background: #ffe08a; }  /* Exception / unkonfiguriert */
+  .hm-err   { background: #f5a3a3; }  /* Transportfehler */
+  .hm-stale { background: #e0e0e0; }  /* noch kein Wert */
   td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
-  .bar-wrap { width: 320px; height: 24px; background: #ddd; border-radius: 4px; overflow: hidden; margin: 4px 0 12px 0; }
+
+  /* Zwei-Spalten-Layout: links Inhalt, rechts Heatmap-Panel */
+  .layout { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  .col-main { flex: 1 1 560px; min-width: 480px; }
+  .col-heat { flex: 0 0 300px; position: sticky; top: 12px; }
+  .panel { background: #fff; border: 1px solid #ccc; border-radius: 8px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.2); padding: 12px 14px; }
+  .panel h3 { margin: 2px 0 10px 0; color: #1a3e6e; }
+
+  /* Heatmap-Kachelraster */
+  .hm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .hm-tile { border-radius: 6px; padding: 8px 6px; text-align: center; cursor: default;
+             border: 1px solid rgba(0,0,0,.15); transition: background .4s; }
+  .hm-tile .t-name { font-size: 11px; color: #333; white-space: nowrap;
+                     overflow: hidden; text-overflow: ellipsis; }
+  .hm-tile .t-val  { font-size: 17px; font-weight: bold; font-variant-numeric: tabular-nums; }
+  .hm-tile .t-reg  { font-size: 10px; color: #555; }
+
+  .bar-wrap { width: 100%; height: 24px; background: #ddd; border-radius: 4px; overflow: hidden; margin: 4px 0 10px 0; }
   .bar-fill { height: 100%; width: 0; transition: width .5s; text-align: right; color: #fff; font-size: 13px; line-height: 24px; padding-right: 6px; box-sizing: border-box; }
+  .bar-label { font-size: 13px; color: #333; }
+
   .legend span { display: inline-block; padding: 2px 10px; margin-right: 8px; border-radius: 4px; font-size: 13px; }
   #last_update { color: #666; font-size: 13px; }
   .cfg { font-size: 14px; color: #333; margin-bottom: 10px; }
+  #hm_summary { font-size: 12px; color: #555; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -35,34 +56,51 @@
 </div>
 <div class="cfg" id="cfg_display"></div>
 
-<h2>TESVOLT EMS Register (live via Proxy Port 1502)</h2>
-<div class="legend">
-  <span style="background:#b7e4b0">OK</span>
-  <span style="background:#ffe08a">Exception (z.B. unkonfiguriert)</span>
-  <span style="background:#f5a3a3">Fehler / Ziel nicht erreichbar</span>
-  <span style="background:#e0e0e0">kein Wert</span>
+<div class="layout">
+
+  <!-- ================= LINKE SPALTE: Tabelle + Parameter ================= -->
+  <div class="col-main">
+    <h2>TESVOLT EMS Register (live via Proxy Port 1502)</h2>
+    <div class="legend">
+      <span style="background:#b7e4b0">OK</span>
+      <span style="background:#ffe08a">Exception (z.B. unkonfiguriert)</span>
+      <span style="background:#f5a3a3">Fehler / Ziel nicht erreichbar</span>
+      <span style="background:#e0e0e0">kein Wert</span>
+    </div>
+    <table id="ems_table">
+    <thead><tr><th>Reg</th><th>Tesvolt</th><th>BLUESUN (geplant)</th><th>Wert</th><th>Status</th><th>Zuletzt OK</th></tr></thead>
+    <tbody></tbody>
+    </table>
+
+    <h2>PowerSplit-Parameter</h2>
+    <table id="split_table">
+    <tbody>
+    <tr><td>Split Mode</td><td id="split_mode_display" class="val"></td></tr>
+    <tr><td>Tesvolt Capacity</td><td id="split_cap_t" class="val"></td></tr>
+    <tr><td>BLUESUN Capacity</td><td id="split_cap_b" class="val"></td></tr>
+    <tr><td>Tesvolt SOC</td><td id="split_soc_t" class="val"></td></tr>
+    <tr><td>BLUESUN SOC</td><td id="split_soc_b" class="val"></td></tr>
+    </tbody>
+    </table>
+  </div>
+
+  <!-- ================= RECHTE SPALTE: Heatmap-Panel ================= -->
+  <div class="col-heat">
+    <div class="panel">
+      <h3>Heatmap</h3>
+      <div class="hm-grid" id="hm_grid"></div>
+      <div id="hm_summary"></div>
+    </div>
+    <div class="panel" style="margin-top:14px;">
+      <h3>SOC</h3>
+      <div class="bar-label">Tesvolt:</div>
+      <div class="bar-wrap"><div id="soc_t_fill" class="bar-fill" style="background:#2e7dd1;"></div></div>
+      <div class="bar-label">BLUESUN:</div>
+      <div class="bar-wrap"><div id="soc_b_fill" class="bar-fill" style="background:#3a9e4d;"></div></div>
+    </div>
+  </div>
+
 </div>
-<table id="ems_table">
-<thead><tr><th>Reg</th><th>Tesvolt</th><th>BLUESUN (geplant)</th><th>Wert</th><th>Status</th><th>Zuletzt OK</th></tr></thead>
-<tbody></tbody>
-</table>
-
-<h2>SOC</h2>
-Tesvolt:
-<div class="bar-wrap"><div id="soc_t_fill" class="bar-fill" style="background:#2e7dd1;"></div></div>
-BLUESUN:
-<div class="bar-wrap"><div id="soc_b_fill" class="bar-fill" style="background:#3a9e4d;"></div></div>
-
-<h2>PowerSplit-Parameter</h2>
-<table id="split_table">
-<tbody>
-<tr><td>Split Mode</td><td id="split_mode_display" class="val"></td></tr>
-<tr><td>Tesvolt Capacity</td><td id="split_cap_t" class="val"></td></tr>
-<tr><td>BLUESUN Capacity</td><td id="split_cap_b" class="val"></td></tr>
-<tr><td>Tesvolt SOC</td><td id="split_soc_t" class="val"></td></tr>
-<tr><td>BLUESUN SOC</td><td id="split_soc_b" class="val"></td></tr>
-</tbody>
-</table>
 
 <script>
 // Register-Mapping (BLUESUN-Spalte = geplantes Mapping; Schreibpfad
@@ -88,7 +126,7 @@ var EXC_TEXT = {
   11: "Ziel (Batterie) nicht erreichbar"
 };
 
-// Zustand pro Register (fuer "Zuletzt OK" und stabile Tabellenzeilen)
+// Zustand pro Register (fuer "Zuletzt OK" und stabile Zeilen/Kacheln)
 var state = {};
 EMS_MAP.forEach(function (e) { state[e.reg] = { value: "-", cls: "hm-stale", status: "kein Wert", lastOk: "-" }; });
 
@@ -108,6 +146,21 @@ function buildTable() {
   });
 }
 
+function buildHeatmap() {
+  var grid = document.getElementById("hm_grid");
+  grid.innerHTML = "";
+  EMS_MAP.forEach(function (e) {
+    var d = document.createElement("div");
+    d.className = "hm-tile hm-stale";
+    d.id = "tile_" + e.reg;
+    d.innerHTML =
+      "<div class='t-name'>" + e.tesvolt + "</div>" +
+      "<div class='t-val' id='tval_" + e.reg + "'>-</div>" +
+      "<div class='t-reg'>" + e.reg + "</div>";
+    grid.appendChild(d);
+  });
+}
+
 function renderReg(reg) {
   var s = state[reg];
   document.getElementById("val_" + reg).innerText = s.value;
@@ -115,11 +168,29 @@ function renderReg(reg) {
   st.innerText = s.status;
   st.className = s.cls;
   document.getElementById("ok_" + reg).innerText = s.lastOk;
+  // Heatmap-Kachel rechts synchron halten
+  var tile = document.getElementById("tile_" + reg);
+  tile.className = "hm-tile " + s.cls;
+  tile.title = reg + ": " + s.status + (s.lastOk !== "-" ? " | Zuletzt OK: " + s.lastOk : "");
+  document.getElementById("tval_" + reg).innerText = s.value;
+}
+
+function renderSummary() {
+  var ok = 0, warn = 0, err = 0, stale = 0;
+  EMS_MAP.forEach(function (e) {
+    var c = state[e.reg].cls;
+    if (c === "hm-ok") ok++;
+    else if (c === "hm-warn") warn++;
+    else if (c === "hm-err") err++;
+    else stale++;
+  });
+  document.getElementById("hm_summary").innerText =
+    ok + " OK / " + warn + " EXC / " + err + " Fehler / " + stale + " leer";
 }
 
 function updateSocBar(id, labelId, soc) {
   var fill = document.getElementById(id);
-  fill.style.width = (soc / 100 * 320) + "px";
+  fill.style.width = soc + "%";
   fill.innerText = soc + " %";
   // Heat-Farbe: rot (leer) -> gruen (voll)
   var hue = Math.max(0, Math.min(120, soc * 1.2));
@@ -134,6 +205,7 @@ function readAll(idx) {
   if (idx >= EMS_MAP.length) {
     document.getElementById("last_update").innerText =
       "Aktualisiert: " + new Date().toLocaleTimeString();
+    renderSummary();
     return;
   }
   var reg = EMS_MAP[idx].reg;
@@ -201,7 +273,6 @@ function loadParams() {
         if (name === "cap_b") document.getElementById("split_cap_b").innerText = v + " kWh";
         if (name === "ip_t" || name === "ip_b") {
           var el = document.getElementById("cfg_display");
-          var cur = el.getAttribute("data-" + name) || "";
           el.setAttribute("data-" + name, v);
           el.innerText = "Tesvolt IP: " + (el.getAttribute("data-ip_t") || "?") +
                          "   |   BLUESUN IP: " + (el.getAttribute("data-ip_b") || "?");
@@ -219,6 +290,7 @@ function refresh() {
 }
 
 buildTable();
+buildHeatmap();
 refresh();
 setInterval(refresh, 10000);
 </script>
