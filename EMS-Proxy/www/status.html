@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>EMS Proxy Status</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
+  h1 { color: #1a3e6e; }
+  h2 { color: #1a3e6e; border-bottom: 2px solid #1a3e6e; padding-bottom: 4px; }
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; color: #fff; font-weight: bold; }
+  .badge.pass  { background: #2e7dd1; }
+  .badge.split { background: #d17f2e; }
+  table { border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  th, td { border: 1px solid #ccc; padding: 6px 12px; text-align: left; }
+  th { background: #1a3e6e; color: #fff; }
+  /* Statusfarben */
+  .hm-ok    { background: #b7e4b0; }  /* Wert frisch gelesen */
+  .hm-warn  { background: #ffe08a; }  /* Exception / unkonfiguriert / unplausibel */
+  .hm-err   { background: #f5a3a3; }  /* Transportfehler */
+  .hm-stale { background: #e0e0e0; }  /* noch kein Wert */
+  td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
+  .not-set { color: #c80; font-weight: bold; }
+
+  /* Parameter-Bereich: PowerSplit + Netzanschluss nebeneinander */
+  .param-wrap { display: flex; gap: 30px; align-items: flex-start; flex-wrap: wrap; }
+  .param-col h2 { margin-top: 24px; }
+  .param-note { font-size: 12px; color: #666; display: block; margin-top: 4px; max-width: 340px; }
+
+  /* Layout oben: links Tabelle, Mitte Power, rechts SOC */
+  .layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+  .col-main  { flex: 1 1 520px; min-width: 460px; }
+  .col-power { flex: 0 0 250px; position: sticky; top: 12px; }
+  .col-soc   { flex: 0 0 260px; position: sticky; top: 12px; }
+  .panel { background: #fff; border: 1px solid #ccc; border-radius: 8px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.2); padding: 12px 14px; }
+  .panel h3 { margin: 2px 0 10px 0; color: #1a3e6e; }
+
+  /* Power-Anzeige */
+  .pw-big { text-align: center; padding: 8px 0 12px 0; border-radius: 8px;
+            transition: background .4s; }
+  .pw-big .pw-val { font-size: 40px; font-weight: bold; font-variant-numeric: tabular-nums; }
+  .pw-big .pw-unit { font-size: 16px; color: #444; }
+  .pw-big .pw-dir { font-size: 14px; font-weight: bold; margin-top: 2px; }
+  .pw-small-wrap { display: flex; gap: 10px; margin-top: 12px; }
+  .pw-small { flex: 1; text-align: center; border: 1px solid #ddd; border-radius: 6px;
+              padding: 8px 4px; transition: background .4s; }
+  .pw-small .pw-name { font-size: 12px; color: #333; }
+  .pw-small .pw-val { font-size: 20px; font-weight: bold; font-variant-numeric: tabular-nums; }
+  .pw-small .pw-unit { font-size: 11px; color: #555; }
+  .dir-dis { color: #b34700; }   /* Entladen */
+  .dir-chg { color: #1a7a2e; }   /* Laden */
+  .dir-idle { color: #666; }
+
+  /* Verlaufskurven (volle Breite): 24 h in 5-min-Schritten */
+  .hist-panel { margin-top: 24px; }
+  .hist-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .hist-label { flex: 0 0 130px; font-size: 12px; text-align: right; color: #333;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hist-label b { display: block; font-size: 13px; }
+  .hist-canvas-wrap { flex: 1 1 auto; min-width: 0; }
+  .hist-canvas { width: 100%; height: 80px; display: block; border: 1px solid #dcdcdc;
+                 border-radius: 3px; background: #fdfdfd; }
+  .hist-now { flex: 0 0 80px; font-size: 14px; font-weight: bold; text-align: right;
+              font-variant-numeric: tabular-nums; }
+  .hist-axis { display: flex; margin-left: 140px; margin-right: 90px;
+               justify-content: space-between; font-size: 11px; color: #666; }
+  .hist-legend { font-size: 12px; color: #555; margin-top: 8px; }
+
+  .bar-wrap { width: 100%; height: 24px; background: #ddd; border-radius: 4px; overflow: hidden; margin: 4px 0 10px 0; }
+  .bar-fill { height: 100%; width: 0; transition: width .5s; text-align: right; color: #fff; font-size: 13px; line-height: 24px; padding-right: 6px; box-sizing: border-box; }
+  .bar-label { font-size: 13px; color: #333; }
+
+  .legend span { display: inline-block; padding: 2px 10px; margin-right: 8px; border-radius: 4px; font-size: 13px; }
+  #last_update { color: #666; font-size: 13px; }
+  .cfg { font-size: 14px; color: #333; margin-bottom: 10px; }
+  #hm_summary { font-size: 12px; color: #555; }
+</style>
+</head>
+<body>
+<h1>EMS Proxy Status</h1>
+
+<div>
+  <span id="mode_display" class="badge pass">Lade Modus...</span>
+  <span id="last_update"></span>
+  <span id="hm_summary"></span>
+</div>
+<div class="cfg" id="cfg_display"></div>
+
+<div class="layout">
+
+  <!-- ================= LINKE SPALTE: Tabelle + Parameter ================= -->
+  <div class="col-main">
+    <h2>Register (live via Proxy Port 1502)</h2>
+    <div class="legend">
+      <span style="background:#b7e4b0">OK</span>
+      <span style="background:#ffe08a">Exception / unplausibel</span>
+      <span style="background:#f5a3a3">Fehler / Ziel nicht erreichbar</span>
+      <span style="background:#e0e0e0">kein Wert</span>
+    </div>
+    <table id="ems_table">
+    <thead><tr><th>Reg</th><th>Signal</th><th>Quelle / Mapping</th><th>Wert</th><th>Status</th><th>Zuletzt OK</th></tr></thead>
+    <tbody></tbody>
+    </table>
+
+    <!-- PowerSplit-Parameter und Netzanschluss-Grenzwerte nebeneinander -->
+    <div class="param-wrap">
+      <div class="param-col">
+        <h2>PowerSplit-Parameter</h2>
+        <table id="split_table">
+        <tbody>
+        <tr><td>Split Mode</td><td id="split_mode_display" class="val"></td></tr>
+        <tr><td>Tesvolt Capacity</td><td id="split_cap_t" class="val"></td></tr>
+        <tr><td>BLUESUN Capacity</td><td id="split_cap_b" class="val"></td></tr>
+        <tr><td>Tesvolt SOC</td><td id="split_soc_t" class="val"></td></tr>
+        <tr><td>BLUESUN SOC</td><td id="split_soc_b" class="val"></td></tr>
+        </tbody>
+        </table>
+      </div>
+      <div class="param-col">
+        <h2>Netzanschluss-Grenzwerte</h2>
+        <table id="grid_table">
+        <tbody>
+        <tr><td>Max. Laden</td><td id="split_grid_chg" class="val"></td></tr>
+        <tr><td>Max. Entladen</td><td id="split_grid_dis" class="val"></td></tr>
+        <tr><td>EMS-Limitquelle (40003/40004)</td><td id="split_grid_ems" class="val"></td></tr>
+        </tbody>
+        </table>
+        <small class="param-note">Netzlimit wird nur im Split Mode durchgesetzt (Minimum aus Setup-Wert und EMS-Register).</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MITTLERE SPALTE: Power-Anzeige ================= -->
+  <div class="col-power">
+    <div class="panel">
+      <h3>Leistung</h3>
+      <div class="pw-big" id="pw_total_box">
+        <div class="pw-val" id="pw_total">-</div>
+        <div class="pw-unit">kW gesamt</div>
+        <div class="pw-dir dir-idle" id="pw_dir">-</div>
+      </div>
+      <div class="pw-small-wrap">
+        <div class="pw-small" id="pw_t_box">
+          <div class="pw-name">Tesvolt</div>
+          <div class="pw-val" id="pw_t">-</div>
+          <div class="pw-unit">kW</div>
+        </div>
+        <div class="pw-small" id="pw_b_box">
+          <div class="pw-name">BLUESUN</div>
+          <div class="pw-val" id="pw_b">-</div>
+          <div class="pw-unit">kW</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= RECHTE SPALTE: SOC ================= -->
+  <div class="col-soc">
+    <div class="panel">
+      <h3>SOC</h3>
+      <div class="bar-label">Tesvolt:</div>
+      <div class="bar-wrap"><div id="soc_t_fill" class="bar-fill" style="background:#2e7dd1;"></div></div>
+      <div class="bar-label">BLUESUN:</div>
+      <div class="bar-wrap"><div id="soc_b_fill" class="bar-fill" style="background:#3a9e4d;"></div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ================= VERLAUFSKURVEN: 24 h in 5-min-Schritten ================= -->
+<div class="panel hist-panel">
+  <h3>Verlauf (24 h, 5-min-Raster) <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
+  <div id="hist_rows"></div>
+  <div class="hist-axis" id="hist_axis"></div>
+  <div class="hist-legend">
+    Blaue Flaeche = Messwertverlauf | gestrichelte Linie = Null (bei Vorzeichen-Signalen) | Luecken = keine Daten | Maus auf Kurve = Zeit + Wert
+  </div>
+</div>
+
+<script>
+// Register-Mapping (BLUESUN-Signale 30011/30015 sind aktuell nur in der
+// Simulation belegt; echtes Mapping folgt nach Herstellerklaerung
+// UDAN-EMS 0x1500/0x1530)
+var EMS_MAP = [
+  { reg: 30001, name: "SOC_T",            src: "Tesvolt SOC",                  unit: "%" },
+  { reg: 30003, name: "Voltage_T",        src: "Tesvolt Voltage",              unit: "" },
+  { reg: 30004, name: "Current_T",        src: "Tesvolt Current",              unit: "" },
+  { reg: 30005, name: "Power_T",          src: "Tesvolt Power (signed W)",     unit: "W" },
+  { reg: 30007, name: "Status_T",         src: "Tesvolt Status",               unit: "" },
+  { reg: 30008, name: "Error_T",          src: "Tesvolt Error",                unit: "" },
+  { reg: 30011, name: "SOC_B",            src: "BLUESUN SOC (0x1140, Sim)",    unit: "%" },
+  { reg: 30015, name: "Power_B",          src: "BLUESUN Power (signed W, Sim)",unit: "W" },
+  { reg: 40003, name: "ChargeLimit_T",    src: "Tesvolt ChgLimit",             unit: "" },
+  { reg: 40004, name: "DischargeLimit_T", src: "Tesvolt DchgLimit",            unit: "" }
+];
+
+var SIGNED_REGS = { 30005: true, 30015: true };
+
+// Plausibilitaetsgrenzen [min, max] - Werte ausserhalb werden gelb markiert
+var PLAUSIBLE = {
+  30001: [0, 100],           // SOC_T in %
+  30011: [0, 100],           // SOC_B in %
+  30005: [-150000, 150000],  // Power_T in W (Anlage max ~120 kW)
+  30015: [-150000, 150000]   // Power_B in W
+};
+
+var EXC_TEXT = {
+  1:  "Illegal Function",
+  2:  "Illegal Data Address",
+  3:  "Illegal Data Value",
+  4:  "Slave Device Failure",
+  10: "Proxy: IPs nicht konfiguriert (Setup!)",
+  11: "Ziel (Batterie) nicht erreichbar"
+};
+
+// ---------------- Verlaufs-Historie (localStorage) ----------------
+// Struktur: { "<reg>": { "<bucketTs>": value, ... }, ... }
+// bucketTs = Unix-ms auf 5 Minuten gerundet. 24 h = 288 Buckets pro Register.
+var BUCKET_MS = 5 * 60 * 1000;
+var WINDOW_MS = 24 * 60 * 60 * 1000;
+var HIST_KEY = "ems_history_v1";
+var history_data = {};
+try { history_data = JSON.parse(localStorage.getItem(HIST_KEY)) || {}; } catch (e) { history_data = {}; }
+
+function histPrune() {
+  var cutoff = Date.now() - WINDOW_MS;
+  Object.keys(history_data).forEach(function (reg) {
+    var h = history_data[reg];
+    Object.keys(h).forEach(function (ts) { if (+ts < cutoff) delete h[ts]; });
+  });
+}
+
+function histRecord(reg, num) {
+  if (num === null) return;
+  var bucket = Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS;
+  if (!history_data[reg]) history_data[reg] = {};
+  history_data[reg][bucket] = num;   // letzter Wert im 5-min-Fenster gewinnt
+}
+
+function histSave() {
+  histPrune();
+  try { localStorage.setItem(HIST_KEY, JSON.stringify(history_data)); } catch (e) {}
+}
+
+// ---------------- Zustand pro Register ----------------
+var state = {};
+EMS_MAP.forEach(function (e) { state[e.reg] = { value: "-", num: null, cls: "hm-stale", status: "kein Wert", lastOk: "-" }; });
+
+function toSigned(v) { return v > 32767 ? v - 65536 : v; }
+
+function isPlausible(reg, num) {
+  var p = PLAUSIBLE[reg];
+  if (!p || num === null) return true;
+  return num >= p[0] && num <= p[1];
+}
+
+function buildTable() {
+  var tbody = document.querySelector("#ems_table tbody");
+  tbody.innerHTML = "";
+  EMS_MAP.forEach(function (e) {
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + e.reg + "</td>" +
+      "<td>" + e.name + "</td>" +
+      "<td>" + e.src + "</td>" +
+      "<td class='val' id='val_" + e.reg + "'>-</td>" +
+      "<td id='st_" + e.reg + "' class='hm-stale'>kein Wert</td>" +
+      "<td id='ok_" + e.reg + "'>-</td>";
+    tbody.appendChild(tr);
+  });
+}
+
+// ---------------- Verlaufskurven (Flaechendiagramme) ----------------
+function buildHistory() {
+  var wrap = document.getElementById("hist_rows");
+  wrap.innerHTML = "";
+  EMS_MAP.forEach(function (e) {
+    var row = document.createElement("div");
+    row.className = "hist-row";
+    row.innerHTML =
+      "<div class='hist-label'><b>" + e.name + "</b>" + e.reg + "</div>" +
+      "<div class='hist-canvas-wrap'><canvas class='hist-canvas' id='hist_" + e.reg + "'></canvas></div>" +
+      "<div class='hist-now' id='histnow_" + e.reg + "'>-</div>";
+    wrap.appendChild(row);
+    attachTooltip(e.reg);
+  });
+  // Zeitachse: alle 4 h eine Markierung
+  var axis = document.getElementById("hist_axis");
+  axis.innerHTML = "";
+  for (var i = 0; i <= 6; i++) {
+    var sp = document.createElement("span");
+    var hoursAgo = 24 - i * 4;
+    sp.innerText = (hoursAgo === 0) ? "jetzt" : "-" + hoursAgo + "h";
+    axis.appendChild(sp);
+  }
+}
+
+function fmtAxis(v) {
+  // kompakte Achsenbeschriftung (z.B. 17230 -> 17.2k)
+  if (Math.abs(v) >= 10000) return (v / 1000).toFixed(1) + "k";
+  if (Math.abs(v) >= 1000)  return (v / 1000).toFixed(2) + "k";
+  return String(Math.round(v * 10) / 10);
+}
+
+function renderHistoryRow(reg) {
+  var canvas = document.getElementById("hist_" + reg);
+  if (!canvas) return;
+  var cssW = canvas.clientWidth || 800;
+  var W = Math.max(400, cssW);
+  var H = 80;
+  if (canvas.width !== W) canvas.width = W;
+  if (canvas.height !== H) canvas.height = H;
+  var ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#fdfdfd";
+  ctx.fillRect(0, 0, W, H);
+
+  var h = history_data[reg] || {};
+  var now = Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS;
+  var startTs = now - WINDOW_MS + BUCKET_MS;
+  var nBuckets = Math.round(WINDOW_MS / BUCKET_MS);   // 288
+
+  // min/max ueber das 24-h-Fenster
+  var min = Infinity, max = -Infinity, any = false;
+  for (var ts = startTs; ts <= now; ts += BUCKET_MS) {
+    var v = h[ts];
+    if (v !== undefined) { any = true; if (v < min) min = v; if (v > max) max = v; }
+  }
+  if (!any) {
+    ctx.fillStyle = "#aaa";
+    ctx.font = "12px Arial";
+    ctx.fillText("noch keine Daten", 10, H / 2 + 4);
+    return;
+  }
+
+  // Bei Vorzeichen-Signalen die Null einschliessen (Nulllinie sichtbar)
+  if (SIGNED_REGS[reg]) {
+    if (min > 0) min = 0;
+    if (max < 0) max = 0;
+  }
+  var span = (max - min) || 1;
+  var padTop = 8, padBot = 8;
+  var plotH = H - padTop - padBot;
+
+  function yOf(v) { return padTop + (1 - (v - min) / span) * plotH; }
+  function xOf(i) { return (i / (nBuckets - 1)) * W; }
+
+  // Horizontale Hilfslinien (25/50/75 %)
+  ctx.strokeStyle = "#eee";
+  ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach(function (f) {
+    var y = padTop + f * plotH;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  });
+
+  // Nulllinie (gestrichelt) wenn 0 im Bereich liegt
+  if (min < 0 && max > 0) {
+    var y0 = yOf(0);
+    ctx.strokeStyle = "#999";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(W, y0); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Kurve in zusammenhaengenden Segmenten zeichnen (Luecken = keine Daten)
+  var baseY = (min < 0 && max > 0) ? yOf(0) : yOf(min);
+  var segStart = -1;
+  function drawSegment(from, to) {
+    if (from < 0 || to < from) return;
+    // Flaeche
+    ctx.beginPath();
+    ctx.moveTo(xOf(from), baseY);
+    for (var i = from; i <= to; i++) {
+      var v = h[startTs + i * BUCKET_MS];
+      ctx.lineTo(xOf(i), yOf(v));
+    }
+    ctx.lineTo(xOf(to), baseY);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(74, 144, 217, 0.25)";
+    ctx.fill();
+    // Linie
+    ctx.beginPath();
+    for (var j = from; j <= to; j++) {
+      var v2 = h[startTs + j * BUCKET_MS];
+      if (j === from) ctx.moveTo(xOf(j), yOf(v2));
+      else ctx.lineTo(xOf(j), yOf(v2));
+    }
+    ctx.strokeStyle = "#2e7dd1";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Einzelpunkt sichtbar machen
+    if (from === to) {
+      var v3 = h[startTs + from * BUCKET_MS];
+      ctx.beginPath();
+      ctx.arc(xOf(from), yOf(v3), 2, 0, Math.PI * 2);
+      ctx.fillStyle = "#2e7dd1";
+      ctx.fill();
+    }
+  }
+  for (var i = 0; i < nBuckets; i++) {
+    var has = h[startTs + i * BUCKET_MS] !== undefined;
+    if (has && segStart < 0) segStart = i;
+    if (!has && segStart >= 0) { drawSegment(segStart, i - 1); segStart = -1; }
+  }
+  if (segStart >= 0) drawSegment(segStart, nBuckets - 1);
+
+  // Min/Max-Beschriftung links
+  ctx.fillStyle = "#888";
+  ctx.font = "10px Arial";
+  ctx.fillText(fmtAxis(max), 4, padTop + 9);
+  ctx.fillText(fmtAxis(min), 4, H - padBot - 2);
+}
+
+function renderHistoryAll() {
+  EMS_MAP.forEach(function (e) {
+    renderHistoryRow(e.reg);
+    var s = state[e.reg];
+    var el = document.getElementById("histnow_" + e.reg);
+    if (el) el.innerText = (s.num === null) ? "-" : s.value + (e.unit ? " " + e.unit : "");
+  });
+}
+
+function attachTooltip(reg) {
+  var canvas = document.getElementById("hist_" + reg);
+  if (!canvas) return;
+  canvas.addEventListener("mousemove", function (ev) {
+    var rect = canvas.getBoundingClientRect();
+    var frac = (ev.clientX - rect.left) / rect.width;
+    var nBuckets = Math.round(WINDOW_MS / BUCKET_MS);
+    var idx = Math.max(0, Math.min(nBuckets - 1, Math.floor(frac * nBuckets)));
+    var now = Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS;
+    var ts = now - WINDOW_MS + BUCKET_MS + idx * BUCKET_MS;
+    var h = history_data[reg] || {};
+    var v = h[ts];
+    var d = new Date(ts);
+    var hh = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+    canvas.title = hh + " Uhr: " + (v === undefined ? "keine Daten" : v);
+  });
+}
+
+function renderReg(reg) {
+  var s = state[reg];
+  document.getElementById("val_" + reg).innerText = s.value;
+  var st = document.getElementById("st_" + reg);
+  st.innerText = s.status;
+  st.className = s.cls;
+  document.getElementById("ok_" + reg).innerText = s.lastOk;
+}
+
+function renderSummary() {
+  var ok = 0, warn = 0, err = 0, stale = 0;
+  EMS_MAP.forEach(function (e) {
+    var c = state[e.reg].cls;
+    if (c === "hm-ok") ok++;
+    else if (c === "hm-warn") warn++;
+    else if (c === "hm-err") err++;
+    else stale++;
+  });
+  document.getElementById("hm_summary").innerText =
+    " | " + ok + " OK / " + warn + " EXC/unplausibel / " + err + " Fehler / " + stale + " leer";
+}
+
+function fmtKw(w) {
+  return (w / 1000).toFixed(1);
+}
+
+function renderPower() {
+  var pT = state[30005].num;
+  var pB = state[30015].num;
+  // Unplausible Werte nicht in die Leistungsanzeige uebernehmen
+  if (!isPlausible(30005, pT)) pT = null;
+  if (!isPlausible(30015, pB)) pB = null;
+  var elT = document.getElementById("pw_t");
+  var elB = document.getElementById("pw_b");
+  elT.innerText = (pT === null) ? "-" : fmtKw(pT);
+  elB.innerText = (pB === null) ? "-" : fmtKw(pB);
+
+  var total = null;
+  if (pT !== null && pB !== null) total = pT + pB;
+  else if (pT !== null) total = pT;
+  else if (pB !== null) total = pB;
+
+  var elTot = document.getElementById("pw_total");
+  var elDir = document.getElementById("pw_dir");
+  var box   = document.getElementById("pw_total_box");
+  if (total === null) {
+    elTot.innerText = "-";
+    elDir.innerText = "-";
+    elDir.className = "pw-dir dir-idle";
+    box.style.background = "#eee";
+    return;
+  }
+  elTot.innerText = fmtKw(total);
+  if (total > 500) {
+    elDir.innerText = "ENTLADEN";
+    elDir.className = "pw-dir dir-dis";
+    box.style.background = "#fdeedd";
+  } else if (total < -500) {
+    elDir.innerText = "LADEN";
+    elDir.className = "pw-dir dir-chg";
+    box.style.background = "#e2f3e5";
+  } else {
+    elDir.innerText = "STANDBY";
+    elDir.className = "pw-dir dir-idle";
+    box.style.background = "#eee";
+  }
+}
+
+function updateSocBar(id, labelId, soc) {
+  var fill = document.getElementById(id);
+  fill.style.width = soc + "%";
+  fill.innerText = soc + " %";
+  // Heat-Farbe: rot (leer) -> gruen (voll)
+  var hue = Math.max(0, Math.min(120, soc * 1.2));
+  fill.style.background = "hsl(" + hue + ", 65%, 42%)";
+  if (labelId) document.getElementById(labelId).innerText = soc + " %";
+}
+
+// Register SEQUENZIELL lesen (Proxy ist single-threaded; parallele
+// Requests wuerden sich stauen)
+function readAll(idx) {
+  idx = idx || 0;
+  if (idx >= EMS_MAP.length) {
+    document.getElementById("last_update").innerText =
+      "Aktualisiert: " + new Date().toLocaleTimeString();
+    renderSummary();
+    renderPower();
+    histSave();
+    renderHistoryAll();
+    return;
+  }
+  var reg = EMS_MAP[idx].reg;
+  fetch("/cgi-bin/read_reg.cgi?reg=" + reg)
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      t = t.trim();
+      var s = state[reg];
+      if (t.indexOf("OK:") === 0) {
+        var raw = parseInt(t.substring(3), 10);
+        var num = isNaN(raw) ? null : (SIGNED_REGS[reg] ? toSigned(raw) : raw);
+        s.num = num;
+        s.value = (num === null) ? t.substring(3) : String(num);
+        s.lastOk = new Date().toLocaleTimeString();
+        if (isPlausible(reg, num)) {
+          s.cls = "hm-ok";
+          s.status = "OK";
+          histRecord(reg, num);
+          if (reg === 30001 && num !== null) updateSocBar("soc_t_fill", "split_soc_t", num);
+          if (reg === 30011 && num !== null) updateSocBar("soc_b_fill", "split_soc_b", num);
+        } else {
+          var p = PLAUSIBLE[reg];
+          s.cls = "hm-warn";
+          s.status = "UNPLAUSIBEL (erwartet " + p[0] + ".." + p[1] + ")";
+        }
+      } else if (t.indexOf("EXC:") === 0) {
+        var code = parseInt(t.substring(4), 10);
+        s.num = null;
+        s.cls = "hm-warn";
+        s.status = "EXC " + code + (EXC_TEXT[code] ? " - " + EXC_TEXT[code] : "");
+      } else {
+        s.num = null;
+        s.cls = "hm-err";
+        s.status = t;
+      }
+      renderReg(reg);
+      readAll(idx + 1);
+    })
+    .catch(function () {
+      var s = state[reg];
+      s.num = null;
+      s.cls = "hm-err";
+      s.status = "HTTP-Fehler";
+      renderReg(reg);
+      readAll(idx + 1);
+    });
+}
+
+function loadMode() {
+  return fetch("/cgi-bin/get_mode.cgi")
+    .then(function (r) { return r.text(); })
+    .then(function (mode) {
+      mode = mode.trim();
+      var el = document.getElementById("mode_display");
+      if (mode === "split") {
+        el.innerText = "Split Mode (Tesvolt + BLUESUN)";
+        el.className = "badge split";
+      } else {
+        el.innerText = "Passthrough Mode (nur Tesvolt)";
+        el.className = "badge pass";
+      }
+    })
+    .catch(function () {
+      document.getElementById("mode_display").innerText = "Modus unbekannt";
+    });
+}
+
+function setGridCell(id, v, suffix) {
+  var el = document.getElementById(id);
+  if (v === "" || v === undefined) {
+    el.innerText = "nicht gesetzt!";
+    el.className = "val not-set";
+  } else {
+    el.innerText = v + (suffix || "");
+    el.className = "val";
+  }
+}
+
+function loadParams() {
+  ["split_mode", "cap_t", "cap_b", "ip_t", "ip_b",
+   "grid_max_chg", "grid_max_dis", "grid_use_ems"].forEach(function (name) {
+    fetch("/cgi-bin/get_param.cgi?name=" + name)
+      .then(function (r) { return r.text(); })
+      .then(function (v) {
+        v = v.trim();
+        if (name === "split_mode") document.getElementById("split_mode_display").innerText = v;
+        if (name === "cap_t") document.getElementById("split_cap_t").innerText = v + " kWh";
+        if (name === "cap_b") document.getElementById("split_cap_b").innerText = v + " kWh";
+        if (name === "grid_max_chg") setGridCell("split_grid_chg", v, " kW");
+        if (name === "grid_max_dis") setGridCell("split_grid_dis", v, " kW");
+        if (name === "grid_use_ems") {
+          document.getElementById("split_grid_ems").innerText = (v === "1") ? "aktiv (min mit Setup-Wert)" : "aus";
+        }
+        if (name === "ip_t" || name === "ip_b") {
+          var el = document.getElementById("cfg_display");
+          el.setAttribute("data-" + name, v);
+          el.innerText = "Tesvolt IP: " + (el.getAttribute("data-ip_t") || "?") +
+                         "   |   BLUESUN IP: " + (el.getAttribute("data-ip_b") || "?");
+        }
+      })
+      .catch(function () {});
+  });
+}
+
+function refresh() {
+  loadMode().then(function () {
+    loadParams();
+    readAll(0);
+  });
+}
+
+buildTable();
+buildHistory();
+renderHistoryAll();
+refresh();
+setInterval(refresh, 10000);
+window.addEventListener("resize", renderHistoryAll);
+</script>
+
+</body>
+</html>

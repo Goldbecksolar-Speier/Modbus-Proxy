@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>EMS Proxy Setup</title></head>
+<body>
+<h1>EMS Proxy Setup</h1>
+
+<div>
+  <h3>Proxy Control</h3>
+  <button id="start_btn">Start</button>
+  <button id="stop_btn">Stop</button>
+  <b id="proxy_status">Status: ...</b><br>
+  <label><input type="checkbox" id="sim_mode"> Simulation (Fantasiewerte, ohne Geraete)</label>
+  <small>Start/Stop wird vom Watchdog innerhalb von ca. 5-10 s umgesetzt.</small>
+</div>
+
+<div>
+  <h3>Power Mode</h3>
+  <label><input type="checkbox" id="mode_split"> Split Mode</label>
+</div>
+
+<div>
+  <h3>Battery Configuration</h3>
+  Tesvolt Capacity (kWh): <input id="cap_t" type="number" min="0"><br>
+  BLUESUN Capacity (kWh): <input id="cap_b" type="number" min="0"><br>
+  Split Mode:
+  <select id="split_mode">
+    <option value="capacity">Capacity</option>
+    <option value="soc">SOC</option>
+  </select>
+</div>
+
+<div>
+  <h3>Netzanschluss (Grid-Limit)</h3>
+  Max. Ladeleistung gesamt (kW): <input id="grid_chg" type="number" min="0" step="1"><br>
+  Max. Entladeleistung gesamt (kW): <input id="grid_dis" type="number" min="0" step="1"><br>
+  <label><input type="checkbox" id="grid_use_ems"> Limit zusaetzlich aus Tesvolt-EMS-Registern 40003/40004 beziehen (wirksam = Minimum beider Quellen)</label><br>
+  <small>Wird nur im Split Mode durchgesetzt. Im Passthrough greift der Proxy nicht in die Tesvolt-Steuerung ein.</small><br>
+  <b id="grid_hint" style="color:#c80"></b>
+</div>
+
+<div>
+  <h3>Modbus / IP</h3>
+  Tesvolt IP: <input id="ip_tesvolt" type="text"><br>
+  BLUESUN IP: <input id="ip_bluesun" type="text"><br>
+</div>
+
+<div>
+  <button id="save_btn">Speichern</button>
+  <span id="save_status"></span>
+</div>
+
+<script>
+function refreshStatus() {
+  fetch("/cgi-bin/proxy_ctl.cgi?action=status")
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var en  = /enabled=1/.test(t);
+      var run = /running=1/.test(t);
+      var sim = /sim=1/.test(t);
+      var el  = document.getElementById("proxy_status");
+      var txt, col;
+      if (!en)      { txt = "GESTOPPT (per UI)"; col = "#c00"; }
+      else if (run) { txt = "LAEUFT";            col = "#080"; }
+      else          { txt = "STARTET...";        col = "#c80"; }
+      if (sim) txt += " [SIMULATION]";
+      el.innerText = "Status: " + txt;
+      el.style.color = col;
+    })
+    .catch(function () {});
+}
+
+function updateGridHint() {
+  var chg = document.getElementById("grid_chg").value;
+  var dis = document.getElementById("grid_dis").value;
+  var hint = document.getElementById("grid_hint");
+  if (!chg || !dis) {
+    hint.innerText = "Achtung: Netzlimit nicht (vollstaendig) gesetzt - im Split Mode wird die Gesamtleistung dann NICHT begrenzt!";
+  } else {
+    hint.innerText = "";
+  }
+}
+
+function loadConfig() {
+  fetch("/cgi-bin/get_mode.cgi")
+    .then(function (r) { return r.text(); })
+    .then(function (mode) {
+      document.getElementById("mode_split").checked = (mode.trim() === "split");
+    })
+    .catch(function () {});
+
+  ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b", "sim",
+   "grid_max_chg", "grid_max_dis", "grid_use_ems"].forEach(function (name) {
+    fetch("/cgi-bin/get_param.cgi?name=" + name)
+      .then(function (r) { return r.text(); })
+      .then(function (v) {
+        v = v.trim();
+        if (name === "cap_t") document.getElementById("cap_t").value = v;
+        if (name === "cap_b") document.getElementById("cap_b").value = v;
+        if (name === "split_mode") document.getElementById("split_mode").value = v;
+        if (name === "ip_t") document.getElementById("ip_tesvolt").value = v;
+        if (name === "ip_b") document.getElementById("ip_bluesun").value = v;
+        if (name === "sim") document.getElementById("sim_mode").checked = (v === "1");
+        if (name === "grid_max_chg") { document.getElementById("grid_chg").value = v; updateGridHint(); }
+        if (name === "grid_max_dis") { document.getElementById("grid_dis").value = v; updateGridHint(); }
+        if (name === "grid_use_ems") document.getElementById("grid_use_ems").checked = (v === "1");
+      })
+      .catch(function () {});
+  });
+}
+
+function saveConfig() {
+  var mode  = document.getElementById("mode_split").checked ? "split" : "passthrough";
+  var split = document.getElementById("split_mode").value;
+  var capT  = document.getElementById("cap_t").value;
+  var capB  = document.getElementById("cap_b").value;
+  var ipT   = document.getElementById("ip_tesvolt").value;
+  var ipB   = document.getElementById("ip_bluesun").value;
+  var sim   = document.getElementById("sim_mode").checked ? "1" : "0";
+  var gChg  = document.getElementById("grid_chg").value;
+  var gDis  = document.getElementById("grid_dis").value;
+  var gEms  = document.getElementById("grid_use_ems").checked ? "1" : "0";
+
+  Promise.all([
+    fetch("/cgi-bin/set_mode.cgi?mode=" + mode),
+    fetch("/cgi-bin/set_split.cgi?split=" + split),
+    fetch("/cgi-bin/set_params.cgi?cap_t=" + capT + "&cap_b=" + capB),
+    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB),
+    fetch("/cgi-bin/set_sim.cgi?sim=" + sim),
+    fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms)
+  ])
+    .then(function () {
+      document.getElementById("save_status").innerText = "Gespeichert.";
+      updateGridHint();
+    })
+    .catch(function () {
+      document.getElementById("save_status").innerText = "Fehler beim Speichern!";
+    });
+}
+
+document.getElementById("save_btn").addEventListener("click", saveConfig);
+document.getElementById("grid_chg").addEventListener("input", updateGridHint);
+document.getElementById("grid_dis").addEventListener("input", updateGridHint);
+document.getElementById("start_btn").addEventListener("click", function () {
+  fetch("/cgi-bin/proxy_ctl.cgi?action=start").then(refreshStatus);
+});
+document.getElementById("stop_btn").addEventListener("click", function () {
+  fetch("/cgi-bin/proxy_ctl.cgi?action=stop").then(refreshStatus);
+});
+loadConfig();
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+
+</body>
+</html>

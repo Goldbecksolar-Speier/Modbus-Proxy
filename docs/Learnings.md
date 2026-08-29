@@ -1,0 +1,54 @@
+# Learnings (fortlaufendes Ledger)
+
+> Regel: Jede neue Erkenntnis wird hier als datierte Zeile ergaenzt.
+> Format: Datum | Kategorie | Learning | Ursache | Loesung/Regel
+> Bestehende Zeilen werden nie ueberschrieben, nur ergaenzt.
+
+## Ledger
+
+| Datum | Kategorie | Learning | Ursache | Loesung / Regel |
+|---|---|---|---|---|
+| 2026-08-29 | PowerShell/SCP | SCP-Fehler "Das System kann den angegebenen Pfad nicht finden" | Start ueber cmd /c bzw. Start-Process mit blockierten interaktiven Prompts - NICHT fehlende Dateien | Key-Auth + non-interactive Aufruf (-o BatchMode=yes) |
+| 2026-08-29 | PowerShell/SSH | SSH-Haenger beim Deployment | Passwort-/Host-Key-/Tailscale-Prompts wurden blockiert | Key-Auth, -o StrictHostKeyChecking=no, keine interaktiven Prompts |
+| 2026-08-29 | RUTX11/BusyBox | Exitcodes kommen teils als True/False statt 0/1 | BusyBox-Shell-Verhalten | Marker im Wrapper: echo EXITCODE:$? und in PowerShell parsen |
+| 2026-08-29 | PowerShell/Encoding | Parserfehler (fehlende Quotes/Klammern) | Beschaedigte Dateien durch Copy/Paste bzw. falsche Kodierung | PS1-Dateien komplett neu generieren und in ANSI speichern (nur ASCII-Zeichen im Code) |
+| 2026-08-29 | Tesvolt EMS | Marketer-Watchdog Holding-Register 12/13 erwartet ca. jede Minute neuen Wert | Timeout nach 5 Minuten -> lokale Steuerung | Watchdog-Feeder implementieren (naechster Entwicklungsschritt) |
+| 2026-08-29 | BLUESUN | Sollwerte sind x100 skaliert (SetPower_B 0x1144, Limits 0x361D/0x361F) | Skalierungsfehler erzeugen 100-fache Leistungssollwerte | Sicherheitskritisch: immer clampen (powersplit.lua) |
+| 2026-08-29 | Architektur | Failsafe-Prinzip bei BLUESUN-Ausfall | 3x Kommunikationsfehler | Automatisch passthrough + SetPower_B=0, EMS steuert Tesvolt weiter |
+| 2026-08-29 | Alt-Code | modbus_proxy.lua / powersplit.lua waren nur Skeletons; get_param/set_params/set_ips.cgi leer (0 Bytes) | Unfertiger Stand | Komplett neu implementiert (feature/optimierung) |
+| 2026-08-29 | Alt-Code | index.html/index_alt.html mit JS-Fehlern (= statt ===, offene Promise-Ketten) | Handarbeit ohne Review | Ersetzt durch neue status.html/setup.html |
+| 2026-08-29 | Alt-Code | Watchdog nutzte killall und hatte keinen Failsafe | Alter Stand | Ersetzt: PID-Kill + Failsafe + Logrotation 500 kB |
+| 2026-08-29 | RUTOS | Projektdoku nutzt systemd-Pfade, RUTOS ist aber OpenWrt (procd/init.d) | Doku-Annahme | /etc/init.d/ems_watchdog als procd-Skript erstellen (naechster Schritt) |
+| 2026-08-29 | Doku-Prozess | Learnings und alle PowerShell-Aufrufe werden ab sofort strukturiert festgehalten | User-Vorgabe 2026-08-29 | Learnings hier als Ledger; PowerShell-Aufrufe in docs/PowerShell-Log.md |
+| 2026-08-29 | RUTOS | init.d-Skript umgesetzt: /etc/init.d/ems_watchdog (rc.common, START=95, STOP=10, PID-basierter Stop) | RUTOS = OpenWrt, kein systemd | Installer nutzt jetzt /etc/init.d/ems_watchdog enable + restart; systemd-Unit bleibt nur als Referenz im Repo; spaeter optional procd (USE_PROCD=1) |
+| 2026-08-29 | Konfiguration | Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo | User-Vorgabe: vor Merge nichts fest eintragen | Konfiguration nur ueber Setup-UI (setup.html -> set_ips.cgi/set_params.cgi); Fallback-IPs aus modbus_proxy.lua entfernt |
+| 2026-08-29 | Sicherheit | Proxy im unkonfigurierten Zustand darf nicht gegen Default-IPs senden | Fallback-IPs 192.168.1.40/50 koennten fremde Geraete treffen | Ohne /etc/tesvolt_ip_t antwortet der Proxy mit Modbus-Exception 0x0A (Gateway Path Unavailable) und loggt Warnung; IPs werden pro Request nachgeladen (Aktivierung ohne Neustart) |
+| 2026-08-29 | Dependencies | modbus_proxy.lua benoetigt luasocket (require 'socket') | Nicht Teil der RUTOS-Standardinstallation | Installer prueft opkg list-installed und installiert bei Bedarf: opkg update && opkg install luasocket |
+| 2026-08-29 | Verifikation | Tesvolt-Register SOC 9/10, Power 11/12, Watchdog 12/13 noch NICHT am Geraet verifiziert | Kein Router-/Anlagenzugriff aus der Entwicklungsumgebung | Verifikationsplan in docs/Umsetzungsplan.md Schritt 3; Ergebnisse hier als neue Zeilen nachtragen |
+| 2026-08-29 | Deployment | Router kann Updates direkt von GitHub ziehen (Tarball via wget/curl + tar, kein git noetig) | Viele Erweiterungen geplant, PowerShell-Weg nicht immer noetig | Neues Skript github_update.sh (Branch als Parameter); Download nach /tmp (RAM); Konfigdateien /etc/tesvolt_* werden nie ueberschrieben; privates Repo: Token in /etc/github_token (chmod 600), NIE ins Repo committen |
+| 2026-08-29 | RUTX11/BusyBox | BusyBox-wget auf RUTOS kann KEINE --header Option | Minimal-wget im ROM | Fuer GitHub-API-Downloads immer curl nutzen (auf RUTX11 vorinstalliert: /usr/bin/curl); github_update.sh nutzt curl-first mit wget-Fallback |
+| 2026-08-29 | RUTOS/Dateisystem | curl (23) write error beim Download nach /usr/bin | / ist squashfs READ-ONLY (df: /dev/root 100%, ro); beschreibbar sind NUR /etc und /usr/local (Overlay ubifs, 83 MB) sowie /tmp und /var (RAM) | ALLE Deployments umgestellt: Skripte -> /usr/local/bin, Web-UI -> /usr/local/www, Konfig -> /etc; /www und /usr/bin sind auf RUTOS NICHT beschreibbar |
+| 2026-08-29 | RUTOS/Web-UI | /www ist read-only, Standard-uhttpd gehoert der RUTOS-WebUI (Vuci) | squashfs + belegter Port 80 | Eigene uhttpd-Instanz 'emsproxy' via uci: Port 8080, home=/usr/local/www, cgi_prefix=/cgi-bin; Setup-UI erreichbar unter http://ROUTER:8080/setup.html |
+| 2026-08-29 | RUTOS/CGI | Setup-UI speicherte nicht: CGIs liefern OK, aber /etc/tesvolt_* wurden nie geschrieben | uhttpd fuehrt CGIs unter RUTOS als User 'uhttpd' (uid 575) aus, NICHT als root -> kein Schreibrecht auf /etc; QUERY_STRING und sed-Parsing waren korrekt (debug.cgi) | github_update.sh legt alle Konfigdateien /etc/tesvolt_* an und setzt chown uhttpd:uhttpd + chmod 664 (Truncate auf eigene Datei braucht kein Schreibrecht auf /etc-Verzeichnis) |
+| 2026-08-29 | BLUESUN/UDAN-EMS | Ansteuerung erfolgt NICHT direkt an die PCS, sondern ueber das UDAN-EMS; bisheriges Mapping SetPower_B=0x1144 ist FALSCH (0x114x-Bereich ist read-only, FC04; 0x1140=System-SOC) | Annahme aus altem Mapping; EMS/HMI-Registerliste v1.18 zeigt Schreibpfad im Steuerblock 0x1500 | Zwei Kandidaten: (A) 0x1500=2 manuell + 0x1501 Kategorie (1=Laden/2=Entladen/3=Standby) + 0x1502 ExpectedPower (0,1 kW) oder (B) 0x1530/0x1531 PCS-direkt (-3000..+3000 kW, Offset 3000, 1 kW); OFFEN: Herstellerfreigabe abwarten, erst dann Codeaenderung in modbus_proxy.lua/powersplit.lua |
+| 2026-08-29 | RUTOS/Tools | modbus_cli existiert auf RUTOS NICHT -> Watchdog-Check lieferte immer leer -> Proxy-Restart-Schleife alle ~8 s sobald IPs gesetzt | Unverifizierte Annahme aus Alt-Code | Eigener Modbus-TCP-Client mb_cli.lua (luasocket, Ausgabe OK:/EXC:/ERR:); Watchdog: EXC = Proxy lebt (kein Neustart), nur ERR = Neustart; Regel: Tool-Existenz auf dem Zielsystem IMMER mit command -v verifizieren |
+| 2026-08-29 | Architektur/Timing | Restart-Schleife blieb trotz mb_cli bestehen: Proxy ist single-threaded und blockiert beim Upstream-Connect auf nicht existierende Test-IP (2 s Timeout) laenger als der mb_cli-Timeout -> ERR:timeout header -> Watchdog killt | Test-IPs 10.0.0.1/10.0.0.2 ohne echte Geraete; Client- und Upstream-Timeout gleich gross | Ohne angeschlossene Geraete Simulationsmodus nutzen (/etc/tesvolt_sim=1): Proxy antwortet sofort mit Fantasiewerten, kein Upstream-Connect; fuer Produktion: Client-Timeout > Upstream-Timeout dimensionieren |
+| 2026-08-29 | Feature/Simulation | Simulationsmodus im Proxy: FC03/04 liefern plausible Fantasiewerte (SOC pendelt 35-75 %), FC06/FC16-Schreibwerte werden gemerkt und zurueckgelesen (Roundtrip-Test der UI) | UI-Entwicklung ohne angeschlossene Batterien | Schalter in setup.html (Checkbox Simulation) -> set_sim.cgi -> /etc/tesvolt_sim; Watchdog ueberspringt BLUESUN-Link-Check im Sim-Modus |
+| 2026-08-29 | RUTOS/CGI | Start/Stop-Button: CGI (User uhttpd) darf den root-Proxy nicht killen | Prozess-Signale nur an eigene UID erlaubt | Steuerdatei /etc/tesvolt_proxy_enabled (0/1) via proxy_ctl.cgi; der Watchdog (root) setzt den Wunsch innerhalb ~5 s um (stoppt/startet den Proxy) |
+| 2026-08-29 | Deployment/Lua | Nach github_update.sh liefen alte Sim-Werte weiter (SOC_B=341, Power_T=0 starr): Lua laedt den Code NUR beim Prozessstart - der laufende Proxy arbeitet mit dem alten Code im Speicher weiter | Update kopiert nur die Datei; Watchdog startet den Proxy nur bei Ausfall neu | github_update.sh beendet nach dem Update den laufenden modbus_proxy.lua (pgrep + kill); der Watchdog startet ihn binnen ~5 s mit dem frischen Code |
+| 2026-08-29 | UI/Plausibilitaet | SOC_B=341 % wurde in status.html gruen (OK) angezeigt - Transport-OK heisst nicht fachlich plausibel | Statusanzeige prueft nur den Modbus-Transport, nicht den Wertebereich | Plausibilitaetsgrenzen in status.html (SOC 0-100 %, Power +-150 kW): Verletzung -> gelb "UNPLAUSIBEL", Wert fliesst nicht in Power-Panel/SOC-Balken ein |
+| 2026-08-29 | Feature/Grid-Limit | Maximale Netzanschlussleistung (Laden/Entladen) darf im Split-Modus nicht ueberschritten werden - die Rest-Umverteilung in powersplit.lua konnte die Summe sonst wieder ueber das Limit heben | Netzanschluss wuerde ueberlastet; Limit aendert sich dynamisch (PV-Einspeisung), das Tesvolt EMS kennt es ggf. in Reg 40003/40004 | Wirksames Limit = min(Setup-kW aus /etc/tesvolt_grid_max_chg/_dis, optional EMS-Reg 40003/40004 per Checkbox - default AUS, Einheit/Skalierung UNVERIFIZIERT); Clamp VOR dem Split + proportionale Sicherung NACH der Umverteilung; greift NUR im Split-Modus (Passthrough = keine Eingriffe in Tesvolt-Steuerung); kein Limit gesetzt -> oranger Warnhinweis, Anlage laeuft |
+
+## Regeln (dauerhaft gueltig)
+
+1. PS1-Dateien immer in ANSI speichern, nur ASCII-Zeichen im Code (keine Umlaute).
+2. Alle Skripte nur im GitHub-Projektordner - niemals OneDrive/SharePoint.
+3. Doku und Learnings als Markdown in docs/.
+4. Keine automatischen Aenderungen an produktiven Systemen; Aenderungen vorher erklaeren.
+5. Jeder PowerShell-Aufruf wird in docs/PowerShell-Log.md dokumentiert (Datum, Befehl, Exitcode, Fehler, Korrektur).
+6. Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo - Konfiguration nur ueber die Setup-UI.
+7. GitHub-Token fuer Self-Update nur auf dem Router in /etc/github_token (chmod 600) - niemals ins Repo.
+8. Auf dem Router nur nach /usr/local/bin, /usr/local/www und /etc deployen - / ist read-only.
+9. CGIs laufen als User 'uhttpd' - Konfigdateien muessen dem uhttpd-User gehoeren (Update-Skript setzt Rechte automatisch).
+10. Tool-Existenz auf dem Zielsystem (RUTOS) immer mit command -v verifizieren, bevor ein Skript sie nutzt.
+11. Nach jedem Code-Update den laufenden Lua-Prozess neu starten - Lua laedt Code nur beim Start (github_update.sh macht das jetzt automatisch).
