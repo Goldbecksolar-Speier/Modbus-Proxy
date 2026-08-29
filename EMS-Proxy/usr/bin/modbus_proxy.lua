@@ -11,6 +11,15 @@
 --                 verteilt; BLUESUN erhaelt SetPower_B (0x1144, x100)
 --                 und Mode (0x1143)
 --
+-- Netzanschluss-Limit (nur Split-Modus!):
+--   * /etc/tesvolt_grid_max_chg / _dis (kW, Setup-UI) = harte Obergrenze
+--   * /etc/tesvolt_grid_use_ems = 1: zusaetzlich EMS-Register 40003/40004
+--     lesen; wirksam ist das MINIMUM beider Quellen pro Richtung
+--     (ACHTUNG: Einheit/Skalierung der EMS-Register noch NICHT am
+--     Geraet verifiziert - Annahme W; Checkbox default AUS)
+--   * Im Passthrough-Modus greift der Proxy NICHT in die
+--     Tesvolt-Steuerung ein (User-Vorgabe 2026-08-29)
+--
 -- Simulation (/etc/tesvolt_sim = 1):
 --   * Proxy beantwortet ALLE Anfragen selbst mit plausiblen
 --     Fantasiewerten - KEINE Verbindung zu echten Geraeten.
@@ -63,6 +72,8 @@ local BS = {
 local EMS = {
   SOC      = 30001,
   SETPOWER = 30005,  -- Schreibzugriff (FC06)
+  CHG_LIM_ADDR = 2,  -- 40003 ChargeLimit_T    (FC03, addr = reg-40001)
+  DIS_LIM_ADDR = 3,  -- 40004 DischargeLimit_T (FC03, addr = reg-40001)
 }
 
 -- ------------------------- Hilfsfunktionen --------------------------
@@ -159,6 +170,29 @@ local function mb_write(ip, addr, value)
   return true
 end
 
+-- ------------------------- Netzanschluss-Limit ----------------------
+-- Liefert { chg = W, dis = W } oder nil (kein Limit gesetzt).
+-- Setup-Werte sind kW (Setup-UI); EMS-Register-Werte werden als W
+-- angenommen (Skalierung UNVERIFIZIERT - deshalb Checkbox default aus).
+-- Wirksam ist pro Richtung das MINIMUM beider Quellen. Faellt die
+-- EMS-Abfrage aus, gilt der Setup-Wert (fail-safe).
+local function get_grid_limits()
+  local chg = tonumber(read_file("/etc/tesvolt_grid_max_chg", ""))
+  local dis = tonumber(read_file("/etc/tesvolt_grid_max_dis", ""))
+  local use_ems = read_file("/etc/tesvolt_grid_use_ems", "0") == "1"
+  local g = {}
+  if chg and chg > 0 then g.chg = chg * 1000 end  -- kW -> W
+  if dis and dis > 0 then g.dis = dis * 1000 end
+  if use_ems then
+    local ems_chg = mb_read(CFG.tesvolt_ip, 3, EMS.CHG_LIM_ADDR)
+    local ems_dis = mb_read(CFG.tesvolt_ip, 3, EMS.DIS_LIM_ADDR)
+    if ems_chg and ems_chg > 0 and (not g.chg or ems_chg < g.chg) then g.chg = ems_chg end
+    if ems_dis and ems_dis > 0 and (not g.dis or ems_dis < g.dis) then g.dis = ems_dis end
+  end
+  if g.chg or g.dis then return g end
+  return nil
+end
+
 -- ------------------------- Simulation --------------------------------
 -- Fantasiewerte fuer UI-Tests ohne echte Geraete.
 -- FC06/FC16-Schreibwerte landen in sim_written und werden beim
@@ -239,6 +273,7 @@ local function handle_setpower(p_req)
     if mode == "split" and CFG.bluesun_ip == nil then
       log("SPLIT angefordert, aber BLUESUN-IP nicht konfiguriert -> passthrough")
     end
+    -- Passthrough: KEIN Eingriff in die Tesvolt-Steuerung (User-Vorgabe)
     return mb_write(CFG.tesvolt_ip, EMS.SETPOWER, p_req)
   end
 
@@ -257,8 +292,17 @@ local function handle_setpower(p_req)
 
   local cap_t, cap_b = get_caps()
   local limits = read_limits()
+  local grid   = get_grid_limits()
   local p_t, p_b = split.split_power(p_req, soc_t, soc_b, cap_t, cap_b,
-                                     "split", get_split_mode(), limits)
+                                     "split", get_split_mode(), limits, grid)
+
+  -- Geclampte Anfragen loggen (Netzanschluss-Schutz)
+  local sum = math.abs(p_t + p_b)
+  if grid and sum + 1 < math.abs(p_req) then
+    log(string.format("GRIDLIMIT: Anfrage %dW auf %dW begrenzt (chg=%s dis=%s)",
+        p_req, math.floor(p_t + p_b),
+        tostring(grid.chg), tostring(grid.dis)))
+  end
 
   local ok1, e1 = mb_write(CFG.tesvolt_ip, EMS.SETPOWER, math.floor(p_t))
   local ok2, e2 = mb_write(CFG.bluesun_ip, BS.SETPOWER, math.floor(p_b / 100))

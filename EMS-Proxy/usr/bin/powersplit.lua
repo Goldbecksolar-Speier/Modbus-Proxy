@@ -10,6 +10,9 @@
 --  * Rest-Umverteilung: wird eine Seite geclampt, uebernimmt die andere
 --    Seite den Rest bis zu ihrem eigenen Limit
 --  * Ladefall: Gewichtung nach freier Energie (100-SOC), nicht nach SOC
+--  * Netzanschluss-Limit (grid): Gesamtleistung wird VOR dem Split
+--    geclampt und NACH der Rest-Umverteilung nochmals gesichert
+--    (die Umverteilung koennte die Summe sonst wieder anheben)
 -- =====================================================================
 
 local M = {}
@@ -26,8 +29,11 @@ end
 -- mode     : "passthrough" | "split"
 -- split_mode : "capacity" | "soc"
 -- limits   : optionale Tabelle { chg_t, dis_t, chg_b, dis_b } (W, positiv)
+-- grid     : optionale Tabelle { chg, dis } (W, positiv) -
+--            maximale GESAMT-Leistung am Netzanschluss pro Richtung.
+--            Nur im Split-Modus wirksam (Passthrough greift nicht ein).
 -- Rueckgabe: P_T, P_B (mit Vorzeichen wie P_req)
-function M.split_power(P_req, SOC_T, SOC_B, Cap_T, Cap_B, mode, split_mode, limits)
+function M.split_power(P_req, SOC_T, SOC_B, Cap_T, Cap_B, mode, split_mode, limits, grid)
   if mode == "passthrough" then
     return P_req, 0
   end
@@ -39,6 +45,15 @@ function M.split_power(P_req, SOC_T, SOC_B, Cap_T, Cap_B, mode, split_mode, limi
 
   local sign  = (P_req >= 0) and 1 or -1
   local P_abs = math.abs(P_req)
+
+  -- Netzanschluss-Limit: Gesamtanforderung clampen (Richtung beachten)
+  local grid_lim = nil
+  if grid then
+    grid_lim = (sign >= 0) and grid.dis or grid.chg
+    if grid_lim and grid_lim >= 0 and P_abs > grid_lim then
+      P_abs = grid_lim
+    end
+  end
 
   local w_t
   if split_mode == "capacity" then
@@ -81,6 +96,17 @@ function M.split_power(P_req, SOC_T, SOC_B, Cap_T, Cap_B, mode, split_mode, limi
       local rest = P_B - lim_b
       P_B = lim_b
       P_T = math.min(P_T + rest, lim_t)
+    end
+  end
+
+  -- Finale Sicherung: Summe darf das Netzlimit nicht ueberschreiten
+  -- (Rest-Umverteilung oben koennte die Summe wieder angehoben haben)
+  if grid_lim then
+    local total_p = P_T + P_B
+    if total_p > grid_lim and total_p > 0 then
+      local f = grid_lim / total_p
+      P_T = P_T * f
+      P_B = P_B * f
     end
   end
 

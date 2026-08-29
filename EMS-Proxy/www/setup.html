@@ -30,6 +30,15 @@
 </div>
 
 <div>
+  <h3>Netzanschluss (Grid-Limit)</h3>
+  Max. Ladeleistung gesamt (kW): <input id="grid_chg" type="number" min="0" step="1"><br>
+  Max. Entladeleistung gesamt (kW): <input id="grid_dis" type="number" min="0" step="1"><br>
+  <label><input type="checkbox" id="grid_use_ems"> Limit zusaetzlich aus Tesvolt-EMS-Registern 40003/40004 beziehen (wirksam = Minimum beider Quellen)</label><br>
+  <small>Wird nur im Split Mode durchgesetzt. Im Passthrough greift der Proxy nicht in die Tesvolt-Steuerung ein.</small><br>
+  <b id="grid_hint" style="color:#c80"></b>
+</div>
+
+<div>
   <h3>Modbus / IP</h3>
   Tesvolt IP: <input id="ip_tesvolt" type="text"><br>
   BLUESUN IP: <input id="ip_bluesun" type="text"><br>
@@ -60,6 +69,17 @@ function refreshStatus() {
     .catch(function () {});
 }
 
+function updateGridHint() {
+  var chg = document.getElementById("grid_chg").value;
+  var dis = document.getElementById("grid_dis").value;
+  var hint = document.getElementById("grid_hint");
+  if (!chg || !dis) {
+    hint.innerText = "Achtung: Netzlimit nicht (vollstaendig) gesetzt - im Split Mode wird die Gesamtleistung dann NICHT begrenzt!";
+  } else {
+    hint.innerText = "";
+  }
+}
+
 function loadConfig() {
   fetch("/cgi-bin/get_mode.cgi")
     .then(function (r) { return r.text(); })
@@ -68,7 +88,8 @@ function loadConfig() {
     })
     .catch(function () {});
 
-  ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b", "sim"].forEach(function (name) {
+  ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b", "sim",
+   "grid_max_chg", "grid_max_dis", "grid_use_ems"].forEach(function (name) {
     fetch("/cgi-bin/get_param.cgi?name=" + name)
       .then(function (r) { return r.text(); })
       .then(function (v) {
@@ -79,6 +100,9 @@ function loadConfig() {
         if (name === "ip_t") document.getElementById("ip_tesvolt").value = v;
         if (name === "ip_b") document.getElementById("ip_bluesun").value = v;
         if (name === "sim") document.getElementById("sim_mode").checked = (v === "1");
+        if (name === "grid_max_chg") { document.getElementById("grid_chg").value = v; updateGridHint(); }
+        if (name === "grid_max_dis") { document.getElementById("grid_dis").value = v; updateGridHint(); }
+        if (name === "grid_use_ems") document.getElementById("grid_use_ems").checked = (v === "1");
       })
       .catch(function () {});
   });
@@ -92,16 +116,21 @@ function saveConfig() {
   var ipT   = document.getElementById("ip_tesvolt").value;
   var ipB   = document.getElementById("ip_bluesun").value;
   var sim   = document.getElementById("sim_mode").checked ? "1" : "0";
+  var gChg  = document.getElementById("grid_chg").value;
+  var gDis  = document.getElementById("grid_dis").value;
+  var gEms  = document.getElementById("grid_use_ems").checked ? "1" : "0";
 
   Promise.all([
     fetch("/cgi-bin/set_mode.cgi?mode=" + mode),
     fetch("/cgi-bin/set_split.cgi?split=" + split),
     fetch("/cgi-bin/set_params.cgi?cap_t=" + capT + "&cap_b=" + capB),
     fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB),
-    fetch("/cgi-bin/set_sim.cgi?sim=" + sim)
+    fetch("/cgi-bin/set_sim.cgi?sim=" + sim),
+    fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms)
   ])
     .then(function () {
       document.getElementById("save_status").innerText = "Gespeichert.";
+      updateGridHint();
     })
     .catch(function () {
       document.getElementById("save_status").innerText = "Fehler beim Speichern!";
@@ -109,6 +138,8 @@ function saveConfig() {
 }
 
 document.getElementById("save_btn").addEventListener("click", saveConfig);
+document.getElementById("grid_chg").addEventListener("input", updateGridHint);
+document.getElementById("grid_dis").addEventListener("input", updateGridHint);
 document.getElementById("start_btn").addEventListener("click", function () {
   fetch("/cgi-bin/proxy_ctl.cgi?action=start").then(refreshStatus);
 });
