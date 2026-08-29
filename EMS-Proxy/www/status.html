@@ -20,13 +20,30 @@
   .hm-stale { background: #e0e0e0; }  /* noch kein Wert */
   td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
 
-  /* Zwei-Spalten-Layout: links Inhalt, rechts Heatmap-Panel */
-  .layout { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
-  .col-main { flex: 1 1 560px; min-width: 480px; }
-  .col-heat { flex: 0 0 300px; position: sticky; top: 12px; }
+  /* Drei-Spalten-Layout: links Tabelle, Mitte Power, rechts Heatmap */
+  .layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+  .col-main  { flex: 1 1 520px; min-width: 460px; }
+  .col-power { flex: 0 0 250px; position: sticky; top: 12px; }
+  .col-heat  { flex: 0 0 290px; position: sticky; top: 12px; }
   .panel { background: #fff; border: 1px solid #ccc; border-radius: 8px;
            box-shadow: 0 1px 3px rgba(0,0,0,.2); padding: 12px 14px; }
   .panel h3 { margin: 2px 0 10px 0; color: #1a3e6e; }
+
+  /* Power-Anzeige */
+  .pw-big { text-align: center; padding: 8px 0 12px 0; border-radius: 8px;
+            transition: background .4s; }
+  .pw-big .pw-val { font-size: 40px; font-weight: bold; font-variant-numeric: tabular-nums; }
+  .pw-big .pw-unit { font-size: 16px; color: #444; }
+  .pw-big .pw-dir { font-size: 14px; font-weight: bold; margin-top: 2px; }
+  .pw-small-wrap { display: flex; gap: 10px; margin-top: 12px; }
+  .pw-small { flex: 1; text-align: center; border: 1px solid #ddd; border-radius: 6px;
+              padding: 8px 4px; transition: background .4s; }
+  .pw-small .pw-name { font-size: 12px; color: #333; }
+  .pw-small .pw-val { font-size: 20px; font-weight: bold; font-variant-numeric: tabular-nums; }
+  .pw-small .pw-unit { font-size: 11px; color: #555; }
+  .dir-dis { color: #b34700; }   /* Entladen */
+  .dir-chg { color: #1a7a2e; }   /* Laden */
+  .dir-idle { color: #666; }
 
   /* Heatmap-Kachelraster */
   .hm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -60,7 +77,7 @@
 
   <!-- ================= LINKE SPALTE: Tabelle + Parameter ================= -->
   <div class="col-main">
-    <h2>TESVOLT EMS Register (live via Proxy Port 1502)</h2>
+    <h2>Register (live via Proxy Port 1502)</h2>
     <div class="legend">
       <span style="background:#b7e4b0">OK</span>
       <span style="background:#ffe08a">Exception (z.B. unkonfiguriert)</span>
@@ -68,7 +85,7 @@
       <span style="background:#e0e0e0">kein Wert</span>
     </div>
     <table id="ems_table">
-    <thead><tr><th>Reg</th><th>Tesvolt</th><th>BLUESUN (geplant)</th><th>Wert</th><th>Status</th><th>Zuletzt OK</th></tr></thead>
+    <thead><tr><th>Reg</th><th>Signal</th><th>Quelle / Mapping</th><th>Wert</th><th>Status</th><th>Zuletzt OK</th></tr></thead>
     <tbody></tbody>
     </table>
 
@@ -82,6 +99,30 @@
     <tr><td>BLUESUN SOC</td><td id="split_soc_b" class="val"></td></tr>
     </tbody>
     </table>
+  </div>
+
+  <!-- ================= MITTLERE SPALTE: Power-Anzeige ================= -->
+  <div class="col-power">
+    <div class="panel">
+      <h3>Leistung</h3>
+      <div class="pw-big" id="pw_total_box">
+        <div class="pw-val" id="pw_total">-</div>
+        <div class="pw-unit">kW gesamt</div>
+        <div class="pw-dir dir-idle" id="pw_dir">-</div>
+      </div>
+      <div class="pw-small-wrap">
+        <div class="pw-small" id="pw_t_box">
+          <div class="pw-name">Tesvolt</div>
+          <div class="pw-val" id="pw_t">-</div>
+          <div class="pw-unit">kW</div>
+        </div>
+        <div class="pw-small" id="pw_b_box">
+          <div class="pw-name">BLUESUN</div>
+          <div class="pw-val" id="pw_b">-</div>
+          <div class="pw-unit">kW</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ================= RECHTE SPALTE: Heatmap-Panel ================= -->
@@ -103,19 +144,23 @@
 </div>
 
 <script>
-// Register-Mapping (BLUESUN-Spalte = geplantes Mapping; Schreibpfad
-// UDAN-EMS 0x1500/0x1530 noch in Klaerung mit dem Hersteller)
+// Register-Mapping (BLUESUN-Signale 30011/30015 sind aktuell nur in der
+// Simulation belegt; echtes Mapping folgt nach Herstellerklaerung
+// UDAN-EMS 0x1500/0x1530)
 var EMS_MAP = [
-  { reg: 30001, tesvolt: "SOC_T",            bluesun: "SOC (0x1140)" },
-  { reg: 30003, tesvolt: "Voltage_T",        bluesun: "Voltage (0x3601 x0.1)" },
-  { reg: 30004, tesvolt: "Current_T",        bluesun: "Current (0x3602 x0.1)" },
-  { reg: 30005, tesvolt: "Power_T",          bluesun: "PCS Power (0x1128 x0.01)" },
-  { reg: 30007, tesvolt: "Status_T",         bluesun: "Status (0x1100)" },
-  { reg: 30008, tesvolt: "Error_T",          bluesun: "Error (0x1010)" },
-  { reg: 30020, tesvolt: "Capacity_T",       bluesun: "Capacity (0x3619 x0.1)" },
-  { reg: 40003, tesvolt: "ChargeLimit_T",    bluesun: "ChgLimit (0x361D x100)" },
-  { reg: 40004, tesvolt: "DischargeLimit_T", bluesun: "DchgLimit (0x361F x100)" }
+  { reg: 30001, name: "SOC_T",            src: "Tesvolt SOC" },
+  { reg: 30003, name: "Voltage_T",        src: "Tesvolt Voltage" },
+  { reg: 30004, name: "Current_T",        src: "Tesvolt Current" },
+  { reg: 30005, name: "Power_T",          src: "Tesvolt Power (signed W)" },
+  { reg: 30007, name: "Status_T",         src: "Tesvolt Status" },
+  { reg: 30008, name: "Error_T",          src: "Tesvolt Error" },
+  { reg: 30011, name: "SOC_B",            src: "BLUESUN SOC (0x1140, Sim)" },
+  { reg: 30015, name: "Power_B",          src: "BLUESUN Power (signed W, Sim)" },
+  { reg: 40003, name: "ChargeLimit_T",    src: "Tesvolt ChgLimit" },
+  { reg: 40004, name: "DischargeLimit_T", src: "Tesvolt DchgLimit" }
 ];
+
+var SIGNED_REGS = { 30005: true, 30015: true };
 
 var EXC_TEXT = {
   1:  "Illegal Function",
@@ -128,7 +173,9 @@ var EXC_TEXT = {
 
 // Zustand pro Register (fuer "Zuletzt OK" und stabile Zeilen/Kacheln)
 var state = {};
-EMS_MAP.forEach(function (e) { state[e.reg] = { value: "-", cls: "hm-stale", status: "kein Wert", lastOk: "-" }; });
+EMS_MAP.forEach(function (e) { state[e.reg] = { value: "-", num: null, cls: "hm-stale", status: "kein Wert", lastOk: "-" }; });
+
+function toSigned(v) { return v > 32767 ? v - 65536 : v; }
 
 function buildTable() {
   var tbody = document.querySelector("#ems_table tbody");
@@ -137,8 +184,8 @@ function buildTable() {
     var tr = document.createElement("tr");
     tr.innerHTML =
       "<td>" + e.reg + "</td>" +
-      "<td>" + e.tesvolt + "</td>" +
-      "<td>" + e.bluesun + "</td>" +
+      "<td>" + e.name + "</td>" +
+      "<td>" + e.src + "</td>" +
       "<td class='val' id='val_" + e.reg + "'>-</td>" +
       "<td id='st_" + e.reg + "' class='hm-stale'>kein Wert</td>" +
       "<td id='ok_" + e.reg + "'>-</td>";
@@ -154,7 +201,7 @@ function buildHeatmap() {
     d.className = "hm-tile hm-stale";
     d.id = "tile_" + e.reg;
     d.innerHTML =
-      "<div class='t-name'>" + e.tesvolt + "</div>" +
+      "<div class='t-name'>" + e.name + "</div>" +
       "<div class='t-val' id='tval_" + e.reg + "'>-</div>" +
       "<div class='t-reg'>" + e.reg + "</div>";
     grid.appendChild(d);
@@ -168,7 +215,6 @@ function renderReg(reg) {
   st.innerText = s.status;
   st.className = s.cls;
   document.getElementById("ok_" + reg).innerText = s.lastOk;
-  // Heatmap-Kachel rechts synchron halten
   var tile = document.getElementById("tile_" + reg);
   tile.className = "hm-tile " + s.cls;
   tile.title = reg + ": " + s.status + (s.lastOk !== "-" ? " | Zuletzt OK: " + s.lastOk : "");
@@ -186,6 +232,49 @@ function renderSummary() {
   });
   document.getElementById("hm_summary").innerText =
     ok + " OK / " + warn + " EXC / " + err + " Fehler / " + stale + " leer";
+}
+
+function fmtKw(w) {
+  return (w / 1000).toFixed(1);
+}
+
+function renderPower() {
+  var pT = state[30005].num;
+  var pB = state[30015].num;
+  var elT = document.getElementById("pw_t");
+  var elB = document.getElementById("pw_b");
+  elT.innerText = (pT === null) ? "-" : fmtKw(pT);
+  elB.innerText = (pB === null) ? "-" : fmtKw(pB);
+
+  var total = null;
+  if (pT !== null && pB !== null) total = pT + pB;
+  else if (pT !== null) total = pT;
+  else if (pB !== null) total = pB;
+
+  var elTot = document.getElementById("pw_total");
+  var elDir = document.getElementById("pw_dir");
+  var box   = document.getElementById("pw_total_box");
+  if (total === null) {
+    elTot.innerText = "-";
+    elDir.innerText = "-";
+    elDir.className = "pw-dir dir-idle";
+    box.style.background = "#eee";
+    return;
+  }
+  elTot.innerText = fmtKw(total);
+  if (total > 500) {
+    elDir.innerText = "ENTLADEN";
+    elDir.className = "pw-dir dir-dis";
+    box.style.background = "#fdeedd";
+  } else if (total < -500) {
+    elDir.innerText = "LADEN";
+    elDir.className = "pw-dir dir-chg";
+    box.style.background = "#e2f3e5";
+  } else {
+    elDir.innerText = "STANDBY";
+    elDir.className = "pw-dir dir-idle";
+    box.style.background = "#eee";
+  }
 }
 
 function updateSocBar(id, labelId, soc) {
@@ -206,6 +295,7 @@ function readAll(idx) {
     document.getElementById("last_update").innerText =
       "Aktualisiert: " + new Date().toLocaleTimeString();
     renderSummary();
+    renderPower();
     return;
   }
   var reg = EMS_MAP[idx].reg;
@@ -215,19 +305,22 @@ function readAll(idx) {
       t = t.trim();
       var s = state[reg];
       if (t.indexOf("OK:") === 0) {
-        s.value = t.substring(3);
+        var raw = parseInt(t.substring(3), 10);
+        var num = isNaN(raw) ? null : (SIGNED_REGS[reg] ? toSigned(raw) : raw);
+        s.num = num;
+        s.value = (num === null) ? t.substring(3) : String(num);
         s.cls = "hm-ok";
         s.status = "OK";
         s.lastOk = new Date().toLocaleTimeString();
-        if (reg === 30001) {
-          var soc = parseInt(s.value, 10);
-          if (!isNaN(soc)) updateSocBar("soc_t_fill", "split_soc_t", soc);
-        }
+        if (reg === 30001 && num !== null) updateSocBar("soc_t_fill", "split_soc_t", num);
+        if (reg === 30011 && num !== null) updateSocBar("soc_b_fill", "split_soc_b", num);
       } else if (t.indexOf("EXC:") === 0) {
         var code = parseInt(t.substring(4), 10);
+        s.num = null;
         s.cls = "hm-warn";
         s.status = "EXC " + code + (EXC_TEXT[code] ? " - " + EXC_TEXT[code] : "");
       } else {
+        s.num = null;
         s.cls = "hm-err";
         s.status = t;
       }
@@ -236,6 +329,7 @@ function readAll(idx) {
     })
     .catch(function () {
       var s = state[reg];
+      s.num = null;
       s.cls = "hm-err";
       s.status = "HTTP-Fehler";
       renderReg(reg);
