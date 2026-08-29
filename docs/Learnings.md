@@ -35,6 +35,8 @@
 | 2026-08-29 | Architektur/Timing | Restart-Schleife blieb trotz mb_cli bestehen: Proxy ist single-threaded und blockiert beim Upstream-Connect auf nicht existierende Test-IP (2 s Timeout) laenger als der mb_cli-Timeout -> ERR:timeout header -> Watchdog killt | Test-IPs 10.0.0.1/10.0.0.2 ohne echte Geraete; Client- und Upstream-Timeout gleich gross | Ohne angeschlossene Geraete Simulationsmodus nutzen (/etc/tesvolt_sim=1): Proxy antwortet sofort mit Fantasiewerten, kein Upstream-Connect; fuer Produktion: Client-Timeout > Upstream-Timeout dimensionieren |
 | 2026-08-29 | Feature/Simulation | Simulationsmodus im Proxy: FC03/04 liefern plausible Fantasiewerte (SOC pendelt 35-75 %), FC06/FC16-Schreibwerte werden gemerkt und zurueckgelesen (Roundtrip-Test der UI) | UI-Entwicklung ohne angeschlossene Batterien | Schalter in setup.html (Checkbox Simulation) -> set_sim.cgi -> /etc/tesvolt_sim; Watchdog ueberspringt BLUESUN-Link-Check im Sim-Modus |
 | 2026-08-29 | RUTOS/CGI | Start/Stop-Button: CGI (User uhttpd) darf den root-Proxy nicht killen | Prozess-Signale nur an eigene UID erlaubt | Steuerdatei /etc/tesvolt_proxy_enabled (0/1) via proxy_ctl.cgi; der Watchdog (root) setzt den Wunsch innerhalb ~5 s um (stoppt/startet den Proxy) |
+| 2026-08-29 | Deployment/Lua | Nach github_update.sh liefen alte Sim-Werte weiter (SOC_B=341, Power_T=0 starr): Lua laedt den Code NUR beim Prozessstart - der laufende Proxy arbeitet mit dem alten Code im Speicher weiter | Update kopiert nur die Datei; Watchdog startet den Proxy nur bei Ausfall neu | github_update.sh beendet nach dem Update den laufenden modbus_proxy.lua (pgrep + kill); der Watchdog startet ihn binnen ~5 s mit dem frischen Code |
+| 2026-08-29 | UI/Plausibilitaet | SOC_B=341 % wurde in status.html gruen (OK) angezeigt - Transport-OK heisst nicht fachlich plausibel | Statusanzeige prueft nur den Modbus-Transport, nicht den Wertebereich | Plausibilitaetsgrenzen in status.html (SOC 0-100 %, Power +-150 kW): Verletzung -> gelb "UNPLAUSIBEL", Wert fliesst nicht in Power-Panel/SOC-Balken ein |
 
 ## Regeln (dauerhaft gueltig)
 
@@ -48,3 +50,4 @@
 8. Auf dem Router nur nach /usr/local/bin, /usr/local/www und /etc deployen - / ist read-only.
 9. CGIs laufen als User 'uhttpd' - Konfigdateien muessen dem uhttpd-User gehoeren (Update-Skript setzt Rechte automatisch).
 10. Tool-Existenz auf dem Zielsystem (RUTOS) immer mit command -v verifizieren, bevor ein Skript sie nutzt.
+11. Nach jedem Code-Update den laufenden Lua-Prozess neu starten - Lua laedt Code nur beim Start (github_update.sh macht das jetzt automatisch).
