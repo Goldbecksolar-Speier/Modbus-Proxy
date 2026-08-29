@@ -17,6 +17,7 @@
 | 2026-08-29 13:49 | Bootstrap-Einzeiler (wget, 2x --header) | RUTX11 (SSH) | FEHLER | wget: unrecognized option | BusyBox-wget kann keine Header -> curl nutzen |
 | 2026-08-29 13:53 | Bootstrap-Einzeiler (curl -> /usr/bin) | RUTX11 (SSH) | FEHLER | curl: (23) client returned ERROR on write of 88 bytes | / ist squashfs read-only -> Ziel /usr/local/bin (Commits 875625d, f995952) |
 | 2026-08-29 13:59 | Bootstrap-Einzeiler (curl -> /usr/local/bin) + github_update.sh feature/optimierung | RUTX11 (SSH) | OK | Hinweis "Skipping invalid Lua prefix" beim uhttpd-Restart (unkritisch, stammt von der uci/uhttpd-Konfigpruefung) | ERSTES ERFOLGREICHES DEPLOYMENT: Token-Auth ok, uhttpd-Instanz Port 8080 angelegt, Watchdog gestartet (PID 17078) |
+| 2026-08-29 14:06 | Verifikation: ps, netstat, tail Log | RUTX11 (SSH) | OK | - | VERIFIZIERT: ems_watchdog.sh (PID 17078) + modbus_proxy.lua (PID 17088) laufen; luasocket funktioniert; Ports 1502 + 8080 LISTEN; Schutzmodus aktiv (Tesvolt=nil, BLUESUN=nil, Exception 0x0A) - System bereit fuer Setup-UI |
 
 ## Konventionen fuer Eintraege
 
