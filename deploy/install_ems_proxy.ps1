@@ -2,15 +2,20 @@
 # EMS-Proxy Installer fuer Teltonika RUTX11 (Key-Auth, non-interactive)
 # In ANSI speichern! Keine Umlaute/Sonderzeichen im Code verwenden.
 #
+# WICHTIG - RUTOS-Dateisystem: / ist squashfs (READ-ONLY).
+# Beschreibbar sind nur /etc und /usr/local (Overlay) sowie /tmp, /var.
+#   Skripte -> /usr/local/bin
+#   Web-UI  -> /usr/local/www (eigene uhttpd-Instanz, Port 8080)
+#   Konfig  -> /etc/tesvolt_*
+#
 # Ablauf:
 #   1. Self-Test (SSH, SCP, modbus_cli, luasocket)
 #   2. Ordner anlegen
 #   3. Dateien uebertragen
-#   4. Rechte setzen, init.d-Dienst aktivieren und starten
+#   4. Rechte setzen, uhttpd-Instanz, init.d-Dienst aktivieren
 #
-# Hinweis: RUTOS basiert auf OpenWrt -> init.d/rc.common, NICHT systemd.
 # Die IPs der Batterien werden NICHT vom Installer gesetzt, sondern
-# nach der Installation ueber die Setup-UI (http://ROUTER/setup.html).
+# nach der Installation ueber die Setup-UI (http://ROUTER:8080/setup.html).
 # =====================================================================
 
 param(
@@ -68,20 +73,21 @@ if (-not ($luaCheck -match "luasocket")) {
     Write-Host "luasocket vorhanden: $luaCheck"
 }
 
-# --- 2. Ordner anlegen ------------------------------------------------
-Invoke-SSH "mkdir -p /usr/bin /www/cgi-bin /etc/init.d /var/log /var/run" | Out-Null
+# --- 2. Ordner anlegen (NUR beschreibbare Pfade!) -----------------------
+Invoke-SSH "mkdir -p /usr/local/bin /usr/local/www/cgi-bin /etc/init.d /var/log /var/run" | Out-Null
 
 # --- 3. Dateien uebertragen -------------------------------------------
 $transfers = @(
-    @{ src = "usr\bin\modbus_proxy.lua";  dst = "/usr/bin/modbus_proxy.lua" },
-    @{ src = "usr\bin\powersplit.lua";    dst = "/usr/bin/powersplit.lua" },
-    @{ src = "usr\bin\ems_watchdog.sh";   dst = "/usr/bin/ems_watchdog.sh" },
+    @{ src = "usr\bin\modbus_proxy.lua";  dst = "/usr/local/bin/modbus_proxy.lua" },
+    @{ src = "usr\bin\powersplit.lua";    dst = "/usr/local/bin/powersplit.lua" },
+    @{ src = "usr\bin\ems_watchdog.sh";   dst = "/usr/local/bin/ems_watchdog.sh" },
+    @{ src = "usr\bin\github_update.sh";  dst = "/usr/local/bin/github_update.sh" },
     @{ src = "etc\init.d\ems_watchdog";   dst = "/etc/init.d/ems_watchdog" },
-    @{ src = "www\setup.html";            dst = "/www/setup.html" },
-    @{ src = "www\status.html";           dst = "/www/status.html" }
+    @{ src = "www\setup.html";            dst = "/usr/local/www/setup.html" },
+    @{ src = "www\status.html";           dst = "/usr/local/www/status.html" }
 )
 Get-ChildItem "$SrcDir\cgi-bin\*.cgi" | ForEach-Object {
-    $transfers += @{ src = "cgi-bin\$($_.Name)"; dst = "/www/cgi-bin/$($_.Name)" }
+    $transfers += @{ src = "cgi-bin\$($_.Name)"; dst = "/usr/local/www/cgi-bin/$($_.Name)" }
 }
 Get-ChildItem "$SrcDir\etc" -File | ForEach-Object {
     $transfers += @{ src = "etc\$($_.Name)"; dst = "/etc/$($_.Name)" }
@@ -99,12 +105,13 @@ foreach ($t in $transfers) {
 }
 if ($failed -gt 0) { Write-Error "$failed Datei(en) konnten nicht uebertragen werden." }
 
-# --- 4. Rechte + Dienste (OpenWrt init.d) -------------------------------
-Invoke-SSH "chmod +x /usr/bin/modbus_proxy.lua /usr/bin/powersplit.lua /usr/bin/ems_watchdog.sh /etc/init.d/ems_watchdog /www/cgi-bin/*.cgi" | Out-Null
+# --- 4. Rechte + uhttpd-Instanz + Dienste --------------------------------
+Invoke-SSH "chmod +x /usr/local/bin/modbus_proxy.lua /usr/local/bin/powersplit.lua /usr/local/bin/ems_watchdog.sh /usr/local/bin/github_update.sh /etc/init.d/ems_watchdog /usr/local/www/cgi-bin/*.cgi" | Out-Null
 Invoke-SSH "[ -s /etc/tesvolt_proxy_mode ] || echo passthrough > /etc/tesvolt_proxy_mode" | Out-Null
+Invoke-SSH "uci -q get uhttpd.emsproxy >/dev/null || (uci set uhttpd.emsproxy=uhttpd; uci add_list uhttpd.emsproxy.listen_http='0.0.0.0:8080'; uci set uhttpd.emsproxy.home='/usr/local/www'; uci set uhttpd.emsproxy.cgi_prefix='/cgi-bin'; uci commit uhttpd; /etc/init.d/uhttpd restart)" | Out-Null
 Invoke-SSH "/etc/init.d/ems_watchdog enable && /etc/init.d/ems_watchdog restart" | Out-Null
 
 Write-Host "=== Installation abgeschlossen. ==="
 Write-Host "WICHTIG: IPs der Batterien jetzt ueber die Setup-UI konfigurieren:"
-Write-Host "  http://$RouterIP/setup.html"
-Write-Host "Status: http://$RouterIP/status.html"
+Write-Host "  http://${RouterIP}:8080/setup.html"
+Write-Host "Status: http://${RouterIP}:8080/status.html"

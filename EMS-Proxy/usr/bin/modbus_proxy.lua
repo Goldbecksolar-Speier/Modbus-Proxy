@@ -3,6 +3,8 @@
 -- EMS Modbus-Proxy fuer Teltonika RUTX11 (RUTOS)
 -- Tesvolt EMS (Master, Modbus TCP) -> Proxy -> Tesvolt-Batterie + BLUESUN PCS
 --
+-- Installationspfad: /usr/local/bin (RUTOS: / ist squashfs read-only!)
+--
 -- Modi:
 --   passthrough : alle Anfragen 1:1 an die Tesvolt-Batterie
 --   split       : SetPower wird via powersplit.lua auf beide Batterien
@@ -21,7 +23,7 @@
 -- =====================================================================
 
 local socket = require("socket")
-local split  = dofile("/usr/bin/powersplit.lua")
+local split  = dofile("/usr/local/bin/powersplit.lua")
 
 -- ------------------------- Konfiguration ----------------------------
 local CFG = {
