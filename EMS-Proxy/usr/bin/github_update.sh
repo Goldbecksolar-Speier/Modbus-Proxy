@@ -14,6 +14,12 @@
 #     Web-UI   -> /usr/local/www/  (eigene uhttpd-Instanz, Port 8080)
 #     Konfig   -> /etc/tesvolt_*
 #
+# WICHTIG - CGI-Rechte:
+#   uhttpd fuehrt CGIs unter RUTOS als User 'uhttpd' (uid 575) aus,
+#   NICHT als root! Die Konfigdateien /etc/tesvolt_* muessen daher
+#   existieren und dem User uhttpd gehoeren (Truncate auf eigene Datei
+#   braucht kein Schreibrecht auf /etc selbst).
+#
 # Privates Repo: Token in /etc/github_token ablegen (chmod 600).
 #   Das Token NIEMALS ins Repo committen!
 #
@@ -113,6 +119,21 @@ for f in "$SRC"/etc/tesvolt_*; do
         log "Konfig angelegt: /etc/$base"
     fi
 done
+
+# CGI-Schreibrechte: uhttpd-CGIs laufen als User 'uhttpd' (uid 575), NICHT root.
+# Damit die Setup-UI speichern kann, muessen alle Konfigdateien existieren
+# und dem uhttpd-User gehoeren (Fallback: world-writable).
+for base in ip_t ip_b cap_t cap_b proxy_mode split_mode proxy_registers; do
+    f="/etc/tesvolt_$base"
+    [ -f "$f" ] || touch "$f"
+    if chown uhttpd:uhttpd "$f" 2>/dev/null; then
+        chmod 664 "$f"
+    else
+        chmod 666 "$f"
+        log "WARNUNG: chown uhttpd fehlgeschlagen fuer $f - chmod 666 gesetzt"
+    fi
+done
+log "Konfigdatei-Rechte fuer uhttpd-User gesetzt"
 
 # --- 4. Rechte ---------------------------------------------------------------
 chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua \
