@@ -25,7 +25,10 @@
 | 2026-08-29 | Sicherheit | Proxy im unkonfigurierten Zustand darf nicht gegen Default-IPs senden | Fallback-IPs 192.168.1.40/50 koennten fremde Geraete treffen | Ohne /etc/tesvolt_ip_t antwortet der Proxy mit Modbus-Exception 0x0A (Gateway Path Unavailable) und loggt Warnung; IPs werden pro Request nachgeladen (Aktivierung ohne Neustart) |
 | 2026-08-29 | Dependencies | modbus_proxy.lua benoetigt luasocket (require 'socket') | Nicht Teil der RUTOS-Standardinstallation | Installer prueft opkg list-installed und installiert bei Bedarf: opkg update && opkg install luasocket |
 | 2026-08-29 | Verifikation | Tesvolt-Register SOC 9/10, Power 11/12, Watchdog 12/13 noch NICHT am Geraet verifiziert | Kein Router-/Anlagenzugriff aus der Entwicklungsumgebung | Verifikationsplan in docs/Umsetzungsplan.md Schritt 3; Ergebnisse hier als neue Zeilen nachtragen |
-| 2026-08-29 | Deployment | Router kann Updates direkt von GitHub ziehen (Tarball via wget/curl + tar, kein git noetig) | Viele Erweiterungen geplant, PowerShell-Weg nicht immer noetig | Neues Skript /usr/bin/github_update.sh (Branch als Parameter); Download nach /tmp (RAM); Konfigdateien /etc/tesvolt_* werden nie ueberschrieben; privates Repo: Token in /etc/github_token (chmod 600), NIE ins Repo committen |
+| 2026-08-29 | Deployment | Router kann Updates direkt von GitHub ziehen (Tarball via wget/curl + tar, kein git noetig) | Viele Erweiterungen geplant, PowerShell-Weg nicht immer noetig | Neues Skript github_update.sh (Branch als Parameter); Download nach /tmp (RAM); Konfigdateien /etc/tesvolt_* werden nie ueberschrieben; privates Repo: Token in /etc/github_token (chmod 600), NIE ins Repo committen |
+| 2026-08-29 | RUTX11/BusyBox | BusyBox-wget auf RUTOS kann KEINE --header Option | Minimal-wget im ROM | Fuer GitHub-API-Downloads immer curl nutzen (auf RUTX11 vorinstalliert: /usr/bin/curl); github_update.sh nutzt curl-first mit wget-Fallback |
+| 2026-08-29 | RUTOS/Dateisystem | curl (23) write error beim Download nach /usr/bin | / ist squashfs READ-ONLY (df: /dev/root 100%, ro); beschreibbar sind NUR /etc und /usr/local (Overlay ubifs, 83 MB) sowie /tmp und /var (RAM) | ALLE Deployments umgestellt: Skripte -> /usr/local/bin, Web-UI -> /usr/local/www, Konfig -> /etc; /www und /usr/bin sind auf RUTOS NICHT beschreibbar |
+| 2026-08-29 | RUTOS/Web-UI | /www ist read-only, Standard-uhttpd gehoert der RUTOS-WebUI (Vuci) | squashfs + belegter Port 80 | Eigene uhttpd-Instanz 'emsproxy' via uci: Port 8080, home=/usr/local/www, cgi_prefix=/cgi-bin; Setup-UI erreichbar unter http://ROUTER:8080/setup.html |
 
 ## Regeln (dauerhaft gueltig)
 
@@ -36,3 +39,4 @@
 5. Jeder PowerShell-Aufruf wird in docs/PowerShell-Log.md dokumentiert (Datum, Befehl, Exitcode, Fehler, Korrektur).
 6. Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo - Konfiguration nur ueber die Setup-UI.
 7. GitHub-Token fuer Self-Update nur auf dem Router in /etc/github_token (chmod 600) - niemals ins Repo.
+8. Auf dem Router nur nach /usr/local/bin, /usr/local/www und /etc deployen - / ist read-only.
