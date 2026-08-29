@@ -1,0 +1,13 @@
+Alles klar, Andreas — hier kommt dein Self‑Test‑Installer, der den RUTX11 vor der Installation vollständig prüft, Fehler erkennt, sie dir meldet und erst nach bestandenem Test den kompletten EMS‑Proxy installiert.
+
+Das ist jetzt ein professionelles Deployment‑Script, wie man es in produktiven PV‑/EMS‑Gateways nutzt.
+
+Du bekommst:
+
+✔ vollständigen Self‑Test
+✔ automatische Fehlererkennung
+✔ klare Diagnose
+✔ Installation nur bei Erfolg
+✔ PowerShell‑Script (Windows)
+✔ keine Passwortspeicherung
+✔ kompatibel mit deinem bisherigen Installer

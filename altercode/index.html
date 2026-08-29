@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tesvolt / BLUESUN EMS Proxy – Status</title>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background: #f0f2f5;
+  }
+
+  h1 {
+    margin-bottom: 15px;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+
+  .card h3 {
+    margin-top: 0;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #ddd;
+  }
+
+  .tesvolt  { border-left: 6px solid #1976d2; }
+  .bluesun  { border-left: 6px solid #4caf50; }
+  .combined { border-left: 6px solid #9c27b0; }
+  .split    { border-left: 6px solid #ff9800; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    margin-top: 10px;
+  }
+
+  th {
+    background: #e0e0e0;
+    padding: 8px;
+    border: 1px solid #ccc;
+  }
+
+  td {
+    padding: 8px;
+    border: 1px solid #ccc;
+  }
+
+  .ok      { color: #2e7d32; font-weight: bold; }
+  .missing { color: #c62828; font-weight: bold; }
+
+  .modebox {
+    padding: 10px;
+    background: #e8f5e9;
+    border-left: 6px solid #4caf50;
+    margin-bottom: 20px;
+  }
+</style>
+</head>
+
+<body>
+
+<h1>Tesvolt / BLUESUN EMS Proxy – Status</h1>
+
+<!-- Current mode -->
+<div class="card modebox">
+  <h3>Current Mode</h3>
+  <p id="mode_display">Loading mode...</p>
+</div>
+
+<!-- TESVOLT EMS Registers -->
+<div class="card tesvolt">
+  <h3>TESVOLT EMS Registers</h3>
+  <p>TESVOLT EMS read/write registers mapped to Tesvolt + BLUESUN.</p>
+
+  <table id="ems_table">
+    <thead>
+      <tr>
+        <th>TESVOLT EMS Register</th>
+        <th>Mapping → Tesvolt</th>
+        <th>Mapping → BLUESUN</th>
+        <th>Live Value</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- PowerSplit Calculation -->
+<div class="card split">
+  <h3>PowerSplit Calculation (Live)</h3>
+
+  <table id="split_table">
+    <thead>
+      <tr>
+        <th>Parameter</th>
+        <th>Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Split Mode</td><td id="split_mode_display">-</td></tr>
+      <tr><td>Tesvolt Capacity (kWh)</td><td id="split_cap_t">-</td></tr>
+      <tr><td>BLUESUN Capacity (kWh)</td><td id="split_cap_b">-</td></tr>
+      <tr><td>Tesvolt SOC</td><td id="split_soc_t">-</td></tr>
+      <tr><td>BLUESUN SOC</td><td id="split_soc_b">-</td></tr>
+      <tr><td>Tesvolt Energy (kWh)</td><td id="split_energy_t">-</td></tr>
+      <tr><td>BLUESUN Energy (kWh)</td><td id="split_energy_b">-</td></tr>
+      <tr><td>Tesvolt Share (kW)</td><td id="split_pt">-</td></tr>
+      <tr><td>BLUESUN Share (kW)</td><td id="split_pb">-</td></tr>
+      <tr><td>Combined Power (kW)</td><td id="split_combined">-</td></tr>
+      <tr><td>BLUESUN SetPower (0x1144)</td><td id="split_bluesun_set">-</td></tr>
+      <tr><td>BLUESUN Mode (0x1143)</td><td id="split_bluesun_mode">-</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Combined Heatmaps -->
+<div class="card combined">
+  <h3>Combined System Heatmaps (24h)</h3>
+
+  <div style="margin-bottom:20px;">
+    <h4>Power Heatmap (24h)</h4>
+    <canvas id="heatmap_power" width="800" height="200"></canvas>
+  </div>
+
+  <div style="margin-bottom:20px;">
+    <h4>SOC Heatmap (24h)</h4>
+    <canvas id="heatmap_soc" width="800" height="200"></canvas>
+  </div>
+</div>
+
+<!-- SOC Bar Display -->
+<div class="card combined">
+  <h3>SOC Bar Display</h3>
+
+  <div style="display:flex; gap:20px;">
+
+    <div style="flex:1;">
+      <h4>Tesvolt SOC</h4>
+      <div id="soc_t_bar" style="height:30px; background:#ddd;">
+        <div id="soc_t_fill" style="height:30px; width:0%; background:#1976d2;"></div>
+      </div>
+      <p id="soc_t_value">- %</p>
+    </div>
+
+    <div style="flex:1;">
+      <h4>BLUESUN SOC</h4>
+      <div id="soc_b_bar" style="height:30px; background:#ddd;">
+        <div id="soc_b_fill" style="height:30px; width:0%; background:#4caf50;"></div>
+      </div>
+      <p id="soc_b_value">- %</p>
+    </div>
+
+    <div style="flex:1;">
+      <h4>Combined SOC</h4>
+      <div id="soc_c_bar" style="height:30px; background:#ddd;">
+        <div id="soc_c_fill" style="height:30px; width:0%; background:#9c27b0;"></div>
+      </div>
+      <p id="soc_c_value">- %</p>
+    </div>
+
+  </div>
+</div>
+
+<div id="status"></div>
+
+<script>
+const EMS_MAP = [
+  { reg: 30001, tesvolt: "SOC_T",        bluesun: "SOC_B (0x1140)" },
+  { reg: 30003, tesvolt: "Voltage_T",    bluesun: "Voltage_B (0x3601 ×0.1)" },
+  { reg: 30004, tesvolt: "Current_T",    bluesun: "Current_B (0x3602 ×0.1)" },
+  { reg: 30005, tesvolt: "Power_T",      bluesun: "PCS Power (0x1128 ×0.01)" },
+  { reg: 30007, tesvolt: "Status_T",     bluesun: "Status_B (0x1100)" },
+  { reg: 30008, tesvolt: "Error_T",      bluesun: "Error_B (0x1010)" },
+  { reg: 30020, tesvolt: "Capacity_T",   bluesun: "Capacity_B (0x3619 ×0.1)" },
+  { reg: 40003, tesvolt: "ChargeLimit_T",   bluesun: "ChargeLimit_B (0x361D ×100)" },
+  { reg: 40004, tesvolt: "DischargeLimit_T",bluesun: "DchgLimit_B (0x361F ×100)" },
+  { reg: "30005_write", tesvolt: "SetPower_T", bluesun: "SetPower_B (0x1144 ×100)" }
+];
+
+let currentMode = "passthrough";
+
+function loadMode() {
+  fetch("/cgi-bin/get_mode.cgi")
+    .then(r => r.text())
+    .then(mode => {
+      currentMode = mode.trim();
+      document.getElementById("mode_display").innerText =
+        currentMode === "split"
+          ? "Split Mode (Tesvolt + BLUESUN active)"
+          : "Passthrough Mode (Tesvolt only)";
+    })
+    .catch(() => {
+      document.getElementById("mode_display").innerText =
+        "Error reading mode (default: passthrough)";
+    });
+}
+
+function loadEMS() {
+  const tbody = document.querySelector("#ems_table tbody");
+  tbody.innerHTML = "";
+
+  EMS_MAP.forEach(entry => {
+    const reg = entry.reg;
+
+    fetch(`/cgi-bin/read_reg.cgi?reg=${reg}`)
+      .then(r => r.text())
+      .then(value => {
+        const missing = (value.trim() === "NOT_FOUND");
+
+        if (missing) {
+          fetch(`/cgi-bin/add_reg_to_config.cgi?reg=${reg}`)
+            .then(() => console.log("Added missing register:", reg));
+        }
+
+        let tesvoltMap = entry.tesvolt;
+        let bluesunMap = entry.bluesun;
+
+        if (currentMode === "passthrough") {
+          if (reg === "30005_write") {
+            bluesunMap = "inactive (passthrough)";
+          }
+        }
+
+        if (currentMode === "split") {
+          if (reg === "30005_write") {
+            bluesunMap = "SetPower_B (0x1144 ×100) + Mode (0x1143)";
+          }
+        }
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${reg}</td>
+          <td>${tesvoltMap}</td>
+          <td>${bluesunMap}</td>
+          <td>${missing ? "-" : value}</td>
+          <td class="${missing ? "missing" : "ok"}">
+            ${missing ? "Not in config → added" : "OK"}
+          </td>
+        `;
+        tbody.appendChild(tr);
+      })
+      .catch(() => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${reg}</td>
+          <td>${entry.tesvolt}</td>
+          <td>${entry.bluesun}</td>
+          <td>-</td>
+          <td class="missing">Error reading</td>
+        `;
+        tbody.appendChild(tr);
+      });
+  });
+}
+
+function loadPowerSplit() {
+  Promise.all([
+    fetch("/cgi-bin/get_mode.cgi").then(r => r.text()),
+    fetch("/cgi-bin/get_param.cgi?name=cap_t").then(r => r.text()),
+    fetch("/cgi-bin/get_param.cgi?name=cap_b").then(r => r.text()),
+    fetch("/cgi-bin/get_param.cgi?name=split_mode").then(r => r.text()),
+    fetch("/cgi-bin/read_reg.cgi?reg=30001").then(r => r.text()), // SOC_T (%)
+    fetch("/cgi-bin/read_reg.cgi?reg=1140").then(r => r.text()),  // SOC_B (%)
+    fetch("/cgi-bin/read_reg.cgi?reg=30005_write").then(r => r.text()) // P_req
+  ]).then(values => {
+
+    const mode       = values[0].trim();
+    const Cap_T      = parseFloat(values[1]) || 17;
+    const Cap_B      = parseFloat(values[2]) || 261;
+    const split_mode = values[3].trim() || "capacity";
+    const SOC_T      = (parseFloat(values[4]) || 0) / 100;
+    const SOC_B      = (parseFloat(values[5]) || 0) / 100;
+    const P_req      = parseFloat(values[6]) || 0;
+
+    document.getElementById("split_mode_display").innerText = split_mode;
+    document.getElementById("split_cap_t").innerText = Cap_T.toFixed(1);
+    document.getElementById("split_cap_b").innerText = Cap_B.toFixed(1);
+    document.getElementById("split_soc_t").innerText = (SOC_T * 100).toFixed(1) + " %";
+    document.getElementById("split_soc_b").innerText = (SOC_B * 100).toFixed(1) + " %";
+
+    let P_T, P_B;
+
+    if (mode === "passthrough") {
+      P_T = P_req;
+      P_B = 0;
+    } else {
+      if (split_mode === "capacity") {
+        P_T = P_req * (Cap_T / (Cap_T + Cap_B));
+      } else {
+        const E_T = Cap_T * SOC_T;
+        const E_B = Cap_B * SOC_B;
+        P_T = P_req * (E_T / (E_T + E_B));
+      }
+      P_B = P_req - P_T;
+    }
+
+    const E_T = Cap_T * SOC_T;
+    const E_B = Cap_B * SOC_B;
+
+    document.getElementById("split_energy_t").innerText = E_T.toFixed(2);
+    document.getElementById("split_energy_b").innerText = E_B.toFixed(2);
+    document.getElementById("split_pt").innerText      = P_T.toFixed(2) + " kW";
+    document.getElementById("split_pb").innerText      = P_B.toFixed(2) + " kW";
+    document.getElementById("split_combined").innerText= (P_T + P_B).toFixed(2) + " kW";
+
+    if (mode === "split") {
+      const bluesun_set  = Math.floor(P_B * 100);
+      const bluesun_mode = (P_req >= 0) ? 1 : 2;
+      document.getElementById("split_bluesun_set").innerText  = bluesun_set + " (raw)";
+      document.getElementById("split_bluesun_mode").innerText = bluesun_mode + " (1=charge, 2=discharge)";
+    } else {
+      document.getElementById("split_bluesun_set").innerText  = "inactive";
+      document.getElementById("split_bluesun_mode").innerText = "inactive";
+    }
+
+    const combinedSOC = (E_T + E_B) / (Cap_T + Cap_B);
+    updateSOCBars((SOC_T * 100).toFixed(1), (SOC_B * 100).toFixed(1), (combinedSOC * 100).toFixed(1));
+  });
+}
+
+function updateSOCBars(soc_t, soc_b, soc_c) {
+  document.getElementById("soc_t_fill").style.width = soc_t + "%";
+  document.getElementById("soc_b_fill").style.width = soc_b + "%";
+  document.getElementById("soc_c_fill").style.width = soc_c + "%";
+
+  document.getElementById("soc_t_value").innerText = soc_t + " %";
+  document.getElementById("soc_b_value").innerText = soc_b + " %";
+  document.getElementById("soc_c_value").innerText = soc_c + " %";
+}
+
+function drawHeatmap(canvasId, data) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const len = data.length || 1;
+  const cellW = w / len;
+
+  data.forEach((v, i) => {
+    const value = Math.max(0, Math.min(1, v));
+    const r = Math.floor(255 * value);
+    const g = Math.floor(255 * (1 - value));
+    const b = 50;
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(i * cellW, 0, cellW, h);
+  });
+}
+
+function updateHeatmaps() {
+  fetch("/cgi-bin/get_heatmap_power.cgi")
+    .then(r => r.json())
+    .then(data => drawHeatmap("heatmap_power", data))
+    .catch(() => {});
+
+  fetch("/cgi-bin/get_heatmap_soc.cgi")
+    .then(r => r.json())
+    .then(data => drawHeatmap("heatmap_soc", data))
+    .catch(() => {});
+}
+
+setInterval(() => {
+  loadMode();
+  loadEMS();
+  loadPowerSplit();
+  updateHeatmaps();
+}, 5000);
+
+loadMode();
+loadEMS();
+loadPowerSplit();
+updateHeatmaps();
+</script>
+
+</body>
+</html>

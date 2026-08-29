@@ -1,0 +1,123 @@
+Scripte im einzelnen:
+Ich beziehe mich direkt auf die Dateien, die ich in deinem Screenshot sehe:
+
+Code
+install_ems_proxy_autofix.ps1
+install_ems_proxy_rutx11.ps1
+install_ems_proxy_selftest.ps1
+install_rutx11.ps1
+install_watchdog.ps1
+setfest RUT.txt
+Struktur.odt
+update_rutx11.ps1
+⭐ Empfohlene Reihenfolge (klar, sicher, ohne Risiko)
+1️⃣ install_ems_proxy_selftest.ps1
+→ Testet den Router vollständig, aber installiert noch nichts.
+Damit weißt du sofort:
+
+SSH ok
+
+SCP ok
+
+CGI ok
+
+modbus_cli ok
+
+systemd ok
+
+Wenn hier etwas rot ist → du musst es fixen oder den Auto‑Fix nutzen.
+
+2️⃣ install_ems_proxy_autofix.ps1
+→ Testet UND repariert automatisch, bevor installiert wird.
+
+Das ist der beste Installer, weil er:
+
+Fehler erkennt
+
+Fehler automatisch behebt
+
+danach sauber installiert
+
+Proxy startet
+
+Watchdog installiert
+
+Watchdog aktiviert
+
+Wenn du diesen nutzt, brauchst du die anderen eigentlich nicht mehr.
+
+3️⃣ update_rutx11.ps1
+→ Nur verwenden, wenn du später Updates machst.
+Er überträgt nur geänderte Dateien.
+
+⭐ Wann brauchst du die anderen Dateien?
+install_rutx11.ps1
+→ Das war die erste Version, ohne Tests und ohne Auto‑Fix.
+Du brauchst sie nicht mehr, außer du willst minimalistisch installieren.
+
+install_ems_proxy_rutx11.ps1
+→ Die Standard‑Installation, ohne Self‑Test und ohne Auto‑Fix.
+Kannst du nutzen, wenn du sicher bist, dass der Router korrekt konfiguriert ist.
+
+install_watchdog.ps1
+→ Nur nötig, wenn du den Watchdog separat installieren willst.
+Da der Auto‑Fix‑Installer den Watchdog bereits integriert → nicht mehr nötig.
+
+⭐ Kurzfassung (die Reihenfolge, die du wirklich brauchst)
+install_ems_proxy_selftest.ps1  
+→ Prüft alles
+
+install_ems_proxy_autofix.ps1  
+→ Repariert + installiert komplett
+
+update_rutx11.ps1  
+→ Für spätere Updates
+
+Fertig.
+
+
+powershell -ExecutionPolicy Bypass -File install_rutx11.ps1
+
+
+Was dieses Installer‑Skript macht
+✔ erstellt alle Ordner auf dem RUTX11
+✔ kopiert alle Dateien automatisch hoch
+✔ setzt alle Rechte korrekt (chmod +x)
+✔ startet den Proxy‑Dienst automatisch
+✔ funktioniert auf jedem RUTX11 (RUTOS 7.x)
+✔ keine manuelle Eingriffe nötig
+Du führst es einfach aus:
+
+powershell
+powershell -ExecutionPolicy Bypass -File install_rutx11.ps1
+
+
+
+Was dieses Update‑Script für dich erledigt
+✔ Überträgt nur die Dateien, die du im Projekt geändert hast
+✔ Aktualisiert Setup‑Seite
+✔ Aktualisiert Status‑Seite
+✔ Aktualisiert CGI‑Skripte
+✔ Aktualisiert PowerSplit‑Engine
+✔ Aktualisiert Modbus‑Proxy
+✔ Setzt alle Rechte korrekt
+✔ Startet den Proxy sauber neu
+Du musst nur:
+
+powershell
+powershell -ExecutionPolicy Bypass -File update_rutx11.ps1
+
+
+Full install
+powershell -ExecutionPolicy Bypass -File install_ems_proxy_rutx11.ps1
+
+Was passiert beim Ausführen des Installers?
+Wenn du den Installer startest:
+
+powershell
+powershell -ExecutionPolicy Bypass -File install_ems_proxy_rutx11.ps1
+Dann kommt:
+
+Code
+root@192.168.1.1's password:
+Du gibst dein RUTX11‑Passwort ein → fertig.

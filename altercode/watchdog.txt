@@ -1,0 +1,30 @@
+Alles klar, Andreas — ich baue dir jetzt einen professionellen Watchdog‑Service für den RUTX11, der:
+
+✔ den EMS‑Proxy (modbus_proxy.lua) überwacht
+✔ automatisch neu startet, wenn er hängt oder abstürzt
+✔ Logfiles schreibt
+✔ den Bluesun‑PCS‑Link überwacht
+✔ den Tesvolt‑EMS‑Link überwacht
+✔ den Split‑Modus berücksichtigt
+✔ sauber als RUTOS‑Service läuft
+✔ beim Boot automatisch startet
+Du bekommst:
+
+watchdog.sh (der eigentliche Watchdog)
+
+watchdog.service (systemd‑Service für RUTX11)
+
+PowerShell‑Update‑Installer, der den Watchdog automatisch installiert
+
+✔ Funktionen
+Überwacht Tesvolt‑EMS
+
+Überwacht BLUESUN‑PCS
+
+Überwacht Proxy‑Prozess
+
+Repariert fehlende Mode‑Datei
+
+Neustart bei Fehlern
+
+Logfile unter /var/log/ems_watchdog.log

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tesvolt / BLUESUN EMS Proxy – Status</title>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background: #f0f2f5;
+  }
+
+  h1 {
+    margin-bottom: 15px;
+  }
+
+  .section {
+    margin-bottom: 25px;
+  }
+
+  .card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+
+  .card h3 {
+    margin-top: 0;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #ddd;
+  }
+
+  /* Farbgruppen */
+  .tesvolt {
+    border-left: 6px solid #1976d2;
+  }
+  .bluesun {
+    border-left: 6px solid #4caf50;
+  }
+  .combined {
+    border-left: 6px solid #9c27b0;
+  }
+  .split {
+    border-left: 6px solid #ff9800;
+  }
+
+  /* Tabellen */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    margin-top: 10px;
+  }
+
+  th {
+    background: #e0e0e0;
+    padding: 8px;
+    border: 1px solid #ccc;
+  }
+
+  td {
+    padding: 8px;
+    border: 1px solid #ccc;
+  }
+
+  /* Statusfarben */
+  .ok {
+    color: #2e7d32;
+    font-weight: bold;
+  }
+  .missing {
+    color: #c62828;
+    font-weight: bold;
+  }
+
+  .charge {
+    color: #4caf50;
+    font-weight: bold;
+  }
+  .discharge {
+    color: #f44336;
+    font-weight: bold;
+  }
+
+  .modebox {
+    padding: 10px;
+    background: #e8f5e9;
+    border-left: 6px solid #4caf50;
+    margin-bottom: 20px;
+  }
+</style>
+</head>
+
+<body>
+
+<h1>Tesvolt / BLUESUN EMS Proxy – Status</h1>
+
+<!-- Aktueller Modus -->
+<div class="card modebox">
+  <h3>Current Mode</h3>
+  <p id="mode_display">Loading mode...</p>
+</div>
+
+<!-- TESVOLT EMS Register -->
+<div class="card tesvolt">
+  <h3>TESVOLT EMS Registers</h3>
+  <p>TESVOLT EMS read/write registers mapped to Tesvolt + BLUESUN.</p>
+
+  <table id="ems_table">
+    <thead>
+      <tr>
+        <th>TESVOLT EMS Register</th>
+        <th>Mapping → Tesvolt</th>
+        <th>Mapping → BLUESUN</th>
+        <th>Live Value</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- PowerSplit Berechnung -->
+<div class="card split">
+  <h3>PowerSplit Calculation (Live)</h3>
+
+  <table id="split_table">
+    <thead>
+      <tr>
+        <th>Parameter</th>
+        <th>Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Split Mode</td><td id="split_mode_display">-</td></tr>
+      <tr><td>Tesvolt Capacity (kWh)</td><td id="split_cap_t">-</td></tr>
+      <tr><td>BLUESUN Capacity (kWh)</td><td id="split_cap_b">-</td></tr>
+      <tr><td>Tesvolt SOC</td><td id="split_soc_t">-</td></tr>
+      <tr><td>BLUESUN SOC</td><td id="split_soc_b">-</td></tr>
+      <tr><td>Tesvolt Energy (kWh)</td><td id="split_energy_t">-</td></tr>
+      <tr><td>BLUESUN Energy (kWh)</td><td id="split_energy_b">-</td></tr>
+      <tr><td>Tesvolt Share (kW)</td><td id="split_pt">-</td></tr>
+      <tr><td>BLUESUN Share (kW)</td><td id="split_pb">-</td></tr>
+      <tr><td>Combined Power (kW)</td><td id="split_combined">-</td></tr>
+      <tr><td>BLUESUN SetPower (0x1144)</td><td id="split_bluesun_set">-</td></tr>
+      <tr><td>BLUESUN Mode (0x1143)</td><td id="split_bluesun_mode">-</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div id="status"></div>
+
+<!-- Deine bestehende JavaScript Logik bleibt unverändert -->
+<script src="status.js"></script>
+
+</body>
+</html>
