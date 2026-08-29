@@ -16,6 +16,11 @@
 --     Fantasiewerten - KEINE Verbindung zu echten Geraeten.
 --   * FC06/FC16-Schreibwerte werden gemerkt und beim Lesen
 --     zurueckgegeben (Roundtrip-Test fuer die UI).
+--   * Simulierte Register (Proxy-Adressen, addr = reg-30001):
+--       30001 (0)  SOC_T   pendelt ~35..75 %
+--       30005 (4)  Power_T pendelt +-18 kW (signed, W)
+--       30011 (10) SOC_B   pendelt ~30..66 % (andere Phase)
+--       30015 (14) Power_B pendelt +-12 kW (signed, W)
 --   * Zum Testen der Status-/Setup-UI ohne angeschlossene Batterien.
 --
 -- Konfiguration:
@@ -164,11 +169,17 @@ local function sim_value(addr)
   if sim_written[addr] ~= nil then return sim_written[addr] end
   local t = os.time()
   if addr == 0 then
-    -- 30001 SOC Tesvolt: pendelt langsam zwischen ~35 und ~75 %
+    -- 30001 SOC_T: pendelt langsam zwischen ~35 und ~75 %
     return 55 + math.floor(20 * math.sin(t / 120))
   elseif addr == 4 then
-    -- 30005 SetPower: 0 bis beschrieben
-    return 0
+    -- 30005 Power_T: +-18 kW (signed, W); durch FC06 ueberschreibbar
+    return math.floor(18000 * math.sin(t / 60))
+  elseif addr == 10 then
+    -- 30011 SOC_B: pendelt zwischen ~30 und ~66 % (andere Phase als SOC_T)
+    return 48 + math.floor(18 * math.sin(t / 90 + 2))
+  elseif addr == 14 then
+    -- 30015 Power_B: +-12 kW (signed, W)
+    return math.floor(12000 * math.sin(t / 75 + 1))
   end
   -- generisch: deterministisch pro Adresse, aendert sich alle 15 s
   return (addr * 13 + math.floor(t / 15) * 7) % 1000
