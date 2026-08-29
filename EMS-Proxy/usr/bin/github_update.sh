@@ -29,6 +29,8 @@
 #   * Konfigdateien (/etc/tesvolt_*) werden NIE ueberschrieben
 #   * uhttpd-Instanz 'emsproxy' (Port 8080) wird bei Bedarf angelegt
 #   * Dienste werden nach dem Update neu gestartet
+#   * Laufender Proxy-Prozess wird beendet, damit der Watchdog ihn
+#     mit dem NEUEN Code startet (alter Code bleibt sonst im Speicher!)
 #   * Log nach /var/log/ems_proxy.log
 # =====================================================================
 
@@ -162,6 +164,15 @@ fi
 # --- 7. Dienste ----------------------------------------------------------------
 /etc/init.d/ems_watchdog enable  2>/dev/null
 /etc/init.d/ems_watchdog restart 2>/dev/null || "$BIN/ems_watchdog.sh" &
+
+# Laufenden Proxy-Prozess beenden: Lua laedt Code nur beim Start - ein
+# bereits laufender Proxy arbeitet sonst mit dem ALTEN Code weiter.
+# Der Watchdog startet ihn binnen ~5 s mit der frischen Datei neu.
+PROXY_PID=$(pgrep -f 'modbus_proxy\.lua' 2>/dev/null | head -n 1)
+if [ -n "$PROXY_PID" ]; then
+    kill "$PROXY_PID" 2>/dev/null
+    log "Alter Proxy-Prozess (PID $PROXY_PID) beendet - Watchdog startet neuen Code"
+fi
 
 # --- 8. Aufraeumen ---------------------------------------------------------------
 rm -rf "$WORKDIR" "$TARBALL"
