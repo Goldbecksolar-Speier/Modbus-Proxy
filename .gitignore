@@ -1,0 +1,12 @@
+# Private SSH-Keys niemals committen
+*_key
+*.pem
+id_rsa*
+ssh/
+
+# Logs und temporaere Dateien
+*.log
+scp_out.txt
+scp_err.txt
+ssh_out.txt
+ssh_err.txt
