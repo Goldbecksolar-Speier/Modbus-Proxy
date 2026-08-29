@@ -51,22 +51,20 @@
   .dir-chg { color: #1a7a2e; }   /* Laden */
   .dir-idle { color: #666; }
 
-  /* Verlaufs-Heatmap (volle Breite): 24 h in 5-min-Zellen */
+  /* Verlaufskurven (volle Breite): 24 h in 5-min-Schritten */
   .hist-panel { margin-top: 24px; }
-  .hist-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .hist-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .hist-label { flex: 0 0 130px; font-size: 12px; text-align: right; color: #333;
                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hist-label b { display: block; font-size: 13px; }
   .hist-canvas-wrap { flex: 1 1 auto; min-width: 0; }
-  .hist-canvas { width: 100%; height: 26px; display: block; border: 1px solid #ccc;
-                 border-radius: 3px; background: #f0f0f0; }
-  .hist-now { flex: 0 0 70px; font-size: 13px; font-weight: bold; text-align: right;
+  .hist-canvas { width: 100%; height: 80px; display: block; border: 1px solid #dcdcdc;
+                 border-radius: 3px; background: #fdfdfd; }
+  .hist-now { flex: 0 0 80px; font-size: 14px; font-weight: bold; text-align: right;
               font-variant-numeric: tabular-nums; }
-  .hist-axis { display: flex; margin-left: 140px; margin-right: 80px;
+  .hist-axis { display: flex; margin-left: 140px; margin-right: 90px;
                justify-content: space-between; font-size: 11px; color: #666; }
   .hist-legend { font-size: 12px; color: #555; margin-top: 8px; }
-  .hist-legend .sw { display: inline-block; width: 14px; height: 12px; border-radius: 2px;
-                     vertical-align: -2px; margin: 0 3px 0 10px; border: 1px solid #bbb; }
 
   .bar-wrap { width: 100%; height: 24px; background: #ddd; border-radius: 4px; overflow: hidden; margin: 4px 0 10px 0; }
   .bar-fill { height: 100%; width: 0; transition: width .5s; text-align: right; color: #fff; font-size: 13px; line-height: 24px; padding-right: 6px; box-sizing: border-box; }
@@ -169,18 +167,13 @@
 
 </div>
 
-<!-- ================= VERLAUFS-HEATMAP: 24 h in 5-min-Schritten ================= -->
+<!-- ================= VERLAUFSKURVEN: 24 h in 5-min-Schritten ================= -->
 <div class="panel hist-panel">
   <h3>Verlauf (24 h, 5-min-Raster) <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
   <div id="hist_rows"></div>
   <div class="hist-axis" id="hist_axis"></div>
   <div class="hist-legend">
-    Farbe = Wert relativ zum 24-h-Bereich des Signals:
-    <span class="sw" style="background:hsl(220,70%,55%)"></span>niedrig
-    <span class="sw" style="background:hsl(110,60%,50%)"></span>mittel
-    <span class="sw" style="background:hsl(0,70%,55%)"></span>hoch
-    <span class="sw" style="background:#f0f0f0"></span>keine Daten
-    &nbsp;|&nbsp; Maus auf Zelle = Zeit + Wert
+    Blaue Flaeche = Messwertverlauf | gestrichelte Linie = Null (bei Vorzeichen-Signalen) | Luecken = keine Daten | Maus auf Kurve = Zeit + Wert
   </div>
 </div>
 
@@ -277,7 +270,7 @@ function buildTable() {
   });
 }
 
-// ---------------- Verlaufs-Heatmap ----------------
+// ---------------- Verlaufskurven (Flaechendiagramme) ----------------
 function buildHistory() {
   var wrap = document.getElementById("hist_rows");
   wrap.innerHTML = "";
@@ -302,46 +295,120 @@ function buildHistory() {
   }
 }
 
-function heatColor(frac) {
-  // 0 = niedrig (blau, hue 220) -> 1 = hoch (rot, hue 0)
-  var hue = 220 - Math.max(0, Math.min(1, frac)) * 220;
-  return "hsl(" + hue + ", 68%, 53%)";
+function fmtAxis(v) {
+  // kompakte Achsenbeschriftung (z.B. 17230 -> 17.2k)
+  if (Math.abs(v) >= 10000) return (v / 1000).toFixed(1) + "k";
+  if (Math.abs(v) >= 1000)  return (v / 1000).toFixed(2) + "k";
+  return String(Math.round(v * 10) / 10);
 }
 
 function renderHistoryRow(reg) {
   var canvas = document.getElementById("hist_" + reg);
   if (!canvas) return;
   var cssW = canvas.clientWidth || 800;
-  var W = Math.max(288, cssW);            // mind. 1 px pro Bucket
-  var H = 26;
+  var W = Math.max(400, cssW);
+  var H = 80;
   if (canvas.width !== W) canvas.width = W;
   if (canvas.height !== H) canvas.height = H;
   var ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#f0f0f0";
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#fdfdfd";
   ctx.fillRect(0, 0, W, H);
 
   var h = history_data[reg] || {};
   var now = Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS;
   var startTs = now - WINDOW_MS + BUCKET_MS;
   var nBuckets = Math.round(WINDOW_MS / BUCKET_MS);   // 288
-  var cellW = W / nBuckets;
 
-  // min/max ueber das 24-h-Fenster (fuer relative Farbskala)
+  // min/max ueber das 24-h-Fenster
   var min = Infinity, max = -Infinity, any = false;
   for (var ts = startTs; ts <= now; ts += BUCKET_MS) {
     var v = h[ts];
     if (v !== undefined) { any = true; if (v < min) min = v; if (v > max) max = v; }
   }
-  if (!any) return;
-  var span = (max - min) || 1;
-
-  for (var i = 0; i < nBuckets; i++) {
-    var ts2 = startTs + i * BUCKET_MS;
-    var v2 = h[ts2];
-    if (v2 === undefined) continue;
-    ctx.fillStyle = heatColor((v2 - min) / span);
-    ctx.fillRect(Math.floor(i * cellW), 0, Math.ceil(cellW), H);
+  if (!any) {
+    ctx.fillStyle = "#aaa";
+    ctx.font = "12px Arial";
+    ctx.fillText("noch keine Daten", 10, H / 2 + 4);
+    return;
   }
+
+  // Bei Vorzeichen-Signalen die Null einschliessen (Nulllinie sichtbar)
+  if (SIGNED_REGS[reg]) {
+    if (min > 0) min = 0;
+    if (max < 0) max = 0;
+  }
+  var span = (max - min) || 1;
+  var padTop = 8, padBot = 8;
+  var plotH = H - padTop - padBot;
+
+  function yOf(v) { return padTop + (1 - (v - min) / span) * plotH; }
+  function xOf(i) { return (i / (nBuckets - 1)) * W; }
+
+  // Horizontale Hilfslinien (25/50/75 %)
+  ctx.strokeStyle = "#eee";
+  ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach(function (f) {
+    var y = padTop + f * plotH;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  });
+
+  // Nulllinie (gestrichelt) wenn 0 im Bereich liegt
+  if (min < 0 && max > 0) {
+    var y0 = yOf(0);
+    ctx.strokeStyle = "#999";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(W, y0); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Kurve in zusammenhaengenden Segmenten zeichnen (Luecken = keine Daten)
+  var baseY = (min < 0 && max > 0) ? yOf(0) : yOf(min);
+  var segStart = -1;
+  function drawSegment(from, to) {
+    if (from < 0 || to < from) return;
+    // Flaeche
+    ctx.beginPath();
+    ctx.moveTo(xOf(from), baseY);
+    for (var i = from; i <= to; i++) {
+      var v = h[startTs + i * BUCKET_MS];
+      ctx.lineTo(xOf(i), yOf(v));
+    }
+    ctx.lineTo(xOf(to), baseY);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(74, 144, 217, 0.25)";
+    ctx.fill();
+    // Linie
+    ctx.beginPath();
+    for (var j = from; j <= to; j++) {
+      var v2 = h[startTs + j * BUCKET_MS];
+      if (j === from) ctx.moveTo(xOf(j), yOf(v2));
+      else ctx.lineTo(xOf(j), yOf(v2));
+    }
+    ctx.strokeStyle = "#2e7dd1";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Einzelpunkt sichtbar machen
+    if (from === to) {
+      var v3 = h[startTs + from * BUCKET_MS];
+      ctx.beginPath();
+      ctx.arc(xOf(from), yOf(v3), 2, 0, Math.PI * 2);
+      ctx.fillStyle = "#2e7dd1";
+      ctx.fill();
+    }
+  }
+  for (var i = 0; i < nBuckets; i++) {
+    var has = h[startTs + i * BUCKET_MS] !== undefined;
+    if (has && segStart < 0) segStart = i;
+    if (!has && segStart >= 0) { drawSegment(segStart, i - 1); segStart = -1; }
+  }
+  if (segStart >= 0) drawSegment(segStart, nBuckets - 1);
+
+  // Min/Max-Beschriftung links
+  ctx.fillStyle = "#888";
+  ctx.font = "10px Arial";
+  ctx.fillText(fmtAxis(max), 4, padTop + 9);
+  ctx.fillText(fmtAxis(min), 4, H - padBot - 2);
 }
 
 function renderHistoryAll() {
