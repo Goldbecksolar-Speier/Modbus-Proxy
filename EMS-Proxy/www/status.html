@@ -21,6 +21,11 @@
   td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
   .not-set { color: #c80; font-weight: bold; }
 
+  /* Parameter-Bereich: PowerSplit + Netzanschluss nebeneinander */
+  .param-wrap { display: flex; gap: 30px; align-items: flex-start; flex-wrap: wrap; }
+  .param-col h2 { margin-top: 24px; }
+  .param-note { font-size: 12px; color: #666; display: block; margin-top: 4px; max-width: 340px; }
+
   /* Layout oben: links Tabelle, Mitte Power, rechts SOC */
   .layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
   .col-main  { flex: 1 1 520px; min-width: 460px; }
@@ -99,20 +104,32 @@
     <tbody></tbody>
     </table>
 
-    <h2>PowerSplit-Parameter</h2>
-    <table id="split_table">
-    <tbody>
-    <tr><td>Split Mode</td><td id="split_mode_display" class="val"></td></tr>
-    <tr><td>Tesvolt Capacity</td><td id="split_cap_t" class="val"></td></tr>
-    <tr><td>BLUESUN Capacity</td><td id="split_cap_b" class="val"></td></tr>
-    <tr><td>Tesvolt SOC</td><td id="split_soc_t" class="val"></td></tr>
-    <tr><td>BLUESUN SOC</td><td id="split_soc_b" class="val"></td></tr>
-    <tr><td>Netz max. Laden</td><td id="split_grid_chg" class="val"></td></tr>
-    <tr><td>Netz max. Entladen</td><td id="split_grid_dis" class="val"></td></tr>
-    <tr><td>EMS-Limitquelle (40003/40004)</td><td id="split_grid_ems" class="val"></td></tr>
-    </tbody>
-    </table>
-    <small style="color:#666;">Netzlimit wird nur im Split Mode durchgesetzt (Minimum aus Setup-Wert und EMS-Register).</small>
+    <!-- PowerSplit-Parameter und Netzanschluss-Grenzwerte nebeneinander -->
+    <div class="param-wrap">
+      <div class="param-col">
+        <h2>PowerSplit-Parameter</h2>
+        <table id="split_table">
+        <tbody>
+        <tr><td>Split Mode</td><td id="split_mode_display" class="val"></td></tr>
+        <tr><td>Tesvolt Capacity</td><td id="split_cap_t" class="val"></td></tr>
+        <tr><td>BLUESUN Capacity</td><td id="split_cap_b" class="val"></td></tr>
+        <tr><td>Tesvolt SOC</td><td id="split_soc_t" class="val"></td></tr>
+        <tr><td>BLUESUN SOC</td><td id="split_soc_b" class="val"></td></tr>
+        </tbody>
+        </table>
+      </div>
+      <div class="param-col">
+        <h2>Netzanschluss-Grenzwerte</h2>
+        <table id="grid_table">
+        <tbody>
+        <tr><td>Max. Laden</td><td id="split_grid_chg" class="val"></td></tr>
+        <tr><td>Max. Entladen</td><td id="split_grid_dis" class="val"></td></tr>
+        <tr><td>EMS-Limitquelle (40003/40004)</td><td id="split_grid_ems" class="val"></td></tr>
+        </tbody>
+        </table>
+        <small class="param-note">Netzlimit wird nur im Split Mode durchgesetzt (Minimum aus Setup-Wert und EMS-Register).</small>
+      </div>
+    </div>
   </div>
 
   <!-- ================= MITTLERE SPALTE: Power-Anzeige ================= -->
