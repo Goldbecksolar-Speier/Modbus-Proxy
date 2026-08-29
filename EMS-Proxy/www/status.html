@@ -15,7 +15,7 @@
   th { background: #1a3e6e; color: #fff; }
   /* Heatmap-Farben */
   .hm-ok    { background: #b7e4b0; }  /* Wert frisch gelesen */
-  .hm-warn  { background: #ffe08a; }  /* Exception / unkonfiguriert */
+  .hm-warn  { background: #ffe08a; }  /* Exception / unkonfiguriert / unplausibel */
   .hm-err   { background: #f5a3a3; }  /* Transportfehler */
   .hm-stale { background: #e0e0e0; }  /* noch kein Wert */
   td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
@@ -80,7 +80,7 @@
     <h2>Register (live via Proxy Port 1502)</h2>
     <div class="legend">
       <span style="background:#b7e4b0">OK</span>
-      <span style="background:#ffe08a">Exception (z.B. unkonfiguriert)</span>
+      <span style="background:#ffe08a">Exception / unplausibel</span>
       <span style="background:#f5a3a3">Fehler / Ziel nicht erreichbar</span>
       <span style="background:#e0e0e0">kein Wert</span>
     </div>
@@ -162,6 +162,15 @@ var EMS_MAP = [
 
 var SIGNED_REGS = { 30005: true, 30015: true };
 
+// Plausibilitaetsgrenzen [min, max] - Werte ausserhalb werden gelb markiert
+// (Wert kommt zwar an, ist aber fachlich unmoeglich, z.B. SOC > 100 %)
+var PLAUSIBLE = {
+  30001: [0, 100],           // SOC_T in %
+  30011: [0, 100],           // SOC_B in %
+  30005: [-150000, 150000],  // Power_T in W (Anlage max ~120 kW)
+  30015: [-150000, 150000]   // Power_B in W
+};
+
 var EXC_TEXT = {
   1:  "Illegal Function",
   2:  "Illegal Data Address",
@@ -176,6 +185,12 @@ var state = {};
 EMS_MAP.forEach(function (e) { state[e.reg] = { value: "-", num: null, cls: "hm-stale", status: "kein Wert", lastOk: "-" }; });
 
 function toSigned(v) { return v > 32767 ? v - 65536 : v; }
+
+function isPlausible(reg, num) {
+  var p = PLAUSIBLE[reg];
+  if (!p || num === null) return true;
+  return num >= p[0] && num <= p[1];
+}
 
 function buildTable() {
   var tbody = document.querySelector("#ems_table tbody");
@@ -231,7 +246,7 @@ function renderSummary() {
     else stale++;
   });
   document.getElementById("hm_summary").innerText =
-    ok + " OK / " + warn + " EXC / " + err + " Fehler / " + stale + " leer";
+    ok + " OK / " + warn + " EXC/unplausibel / " + err + " Fehler / " + stale + " leer";
 }
 
 function fmtKw(w) {
@@ -241,6 +256,9 @@ function fmtKw(w) {
 function renderPower() {
   var pT = state[30005].num;
   var pB = state[30015].num;
+  // Unplausible Werte nicht in die Leistungsanzeige uebernehmen
+  if (!isPlausible(30005, pT)) pT = null;
+  if (!isPlausible(30015, pB)) pB = null;
   var elT = document.getElementById("pw_t");
   var elB = document.getElementById("pw_b");
   elT.innerText = (pT === null) ? "-" : fmtKw(pT);
@@ -309,11 +327,17 @@ function readAll(idx) {
         var num = isNaN(raw) ? null : (SIGNED_REGS[reg] ? toSigned(raw) : raw);
         s.num = num;
         s.value = (num === null) ? t.substring(3) : String(num);
-        s.cls = "hm-ok";
-        s.status = "OK";
         s.lastOk = new Date().toLocaleTimeString();
-        if (reg === 30001 && num !== null) updateSocBar("soc_t_fill", "split_soc_t", num);
-        if (reg === 30011 && num !== null) updateSocBar("soc_b_fill", "split_soc_b", num);
+        if (isPlausible(reg, num)) {
+          s.cls = "hm-ok";
+          s.status = "OK";
+          if (reg === 30001 && num !== null) updateSocBar("soc_t_fill", "split_soc_t", num);
+          if (reg === 30011 && num !== null) updateSocBar("soc_b_fill", "split_soc_b", num);
+        } else {
+          var p = PLAUSIBLE[reg];
+          s.cls = "hm-warn";
+          s.status = "UNPLAUSIBEL (erwartet " + p[0] + ".." + p[1] + ")";
+        }
       } else if (t.indexOf("EXC:") === 0) {
         var code = parseInt(t.substring(4), 10);
         s.num = null;
