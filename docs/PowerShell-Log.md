@@ -23,6 +23,9 @@
 | 2026-08-29 14:23 | Fix committed: github_update.sh legt /etc/tesvolt_* an + chown uhttpd:uhttpd, chmod 664 | GitHub (Commits 832cec7, 58653c8) | OK | - | Truncate auf eigene Datei braucht kein Schreibrecht auf /etc-Verzeichnis |
 | 2026-08-29 14:27 | github_update.sh feature/optimierung (Fix-Rollout) | RUTX11 (SSH) | OK | - | Alle 7 Konfigdateien mit Owner uhttpd:uhttpd, chmod 664; Watchdog neu gestartet (PID 22337) |
 | 2026-08-29 14:28 | curl set_ips.cgi?ip_t=10.0.0.1&ip_b=10.0.0.2 + cat | RUTX11 (SSH) | OK | - | VERIFIZIERT: CGI schreibt jetzt korrekt nach /etc/tesvolt_ip_t/ip_b; debug.cgi entfernt; Setup-UI-Speicherpfad komplett funktionsfaehig |
+| 2026-08-29 14:41 | curl read_reg.cgi?reg=30001 (Test status.html-Backend) | RUTX11 (SSH) | FEHLER | ERR:proxy connection refused; Log: "EMS-Proxy gestartet" alle ~8 s | DIAGNOSE: Restart-Schleife - Watchdog-Check nutzte modbus_cli, das auf RUTOS NICHT existiert; Fix: mb_cli.lua (luasocket) + Watchdog-Logik EXC=lebt (Commits 173bc50, 6e751e0) |
+| 2026-08-29 14:45 | github_update.sh feature/optimierung (mb_cli-Rollout) | RUTX11 (SSH) | FEHLER | Restart-Schleife weiterhin; read_reg jetzt ERR:timeout header | URSACHE 2: Proxy (single-threaded) blockiert 2 s beim Connect auf nicht existierende Test-IP 10.0.0.1 -> laenger als mb_cli-Timeout -> Watchdog killt; Loesung: Simulationsmodus ohne Geraete (Commits 9cc95c8, b05bf57) |
+| 2026-08-29 14:54 | github_update.sh feature/optimierung (Sim + Start/Stop-Rollout) + echo 1 > /etc/tesvolt_sim | RUTX11 (SSH) | OK | - | VERIFIZIERT: Log "SIMULATION: beantworte Anfragen mit Fantasiewerten", keine Restarts mehr; curl read_reg.cgi?reg=30001 -> OK:64 - status.html-Datenpfad Ende-zu-Ende funktionsfaehig |
 
 ## Konventionen fuer Eintraege
 
