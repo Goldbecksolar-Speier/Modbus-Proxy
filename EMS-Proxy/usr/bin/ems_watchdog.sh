@@ -8,10 +8,16 @@
 #  * kill per PID statt killall (sauberer auf BusyBox)
 #  * KEINE Fallback-IPs: ohne /etc/tesvolt_ip_t/_b werden die
 #    entsprechenden Checks uebersprungen (Proxy ist dann im Schutzmodus)
+#  * Modbus-Zugriffe via mb_cli.lua (luasocket) - modbus_cli existiert
+#    auf RUTOS NICHT!
+#  * WICHTIG: EXC:<n> heisst der Proxy LEBT (Modbus-Exception ist eine
+#    gueltige Antwort, z.B. Ziel-Batterie nicht erreichbar). Nur bei
+#    ERR:* (connect refused / timeout) wird der Proxy neu gestartet.
 # =====================================================================
 
 LOG="/var/log/ems_watchdog.log"
 PROXY="/usr/local/bin/modbus_proxy.lua"
+MB="/usr/local/bin/mb_cli.lua"
 
 BS_FAIL=0
 BS_FAIL_LIMIT=3
@@ -43,8 +49,9 @@ failsafe() {
     [ -z "$BLUESUN_IP" ] && return
     logmsg "FAILSAFE: $1 -> passthrough + SetPower_B=0"
     echo "passthrough" > /etc/tesvolt_proxy_mode
-    # SetPower_B (0x1144 = 4420) auf 0 setzen
-    modbus_cli tcp "$BLUESUN_IP" -u 1 -w 4420 -v 0 2>/dev/null
+    # SetPower_B=0 (Register 0x1144 = 4420; ACHTUNG: Schreibpfad UDAN-EMS
+    # 0x1500/0x1530 noch in Herstellerklaerung - Register ggf. anpassen)
+    lua "$MB" write "$BLUESUN_IP" 502 1 4420 0 >/dev/null 2>&1
 }
 
 logmsg "Watchdog gestartet"
@@ -61,29 +68,32 @@ while true; do
         restart_proxy "Proxy laeuft nicht"
     fi
 
-    # 2) Tesvolt EMS-Link: SOC (Register 30001) ueber den Proxy lesen
-    #    Nur wenn IPs konfiguriert sind (sonst antwortet der Proxy mit 0x0A)
-    if [ -n "$TESVOLT_IP" ]; then
-        SOC_T=$(modbus_cli tcp 127.0.0.1 -p 1502 -u 1 -r 30001 -t s16 2>/dev/null)
-        if [ -z "$SOC_T" ]; then
-            restart_proxy "Tesvolt EMS/Proxy antwortet nicht"
-        fi
-    fi
+    # 2) Proxy-Erreichbarkeit: SOC (Register 30001 -> FC04 addr 0) via Proxy.
+    #    OK:*  -> alles gut
+    #    EXC:* -> Proxy LEBT (z.B. EXC:11 Ziel-Batterie down) -> KEIN Neustart
+    #    ERR:* -> Proxy antwortet nicht auf TCP -> Neustart
+    R=$(lua "$MB" read 127.0.0.1 1502 1 4 0 2>/dev/null)
+    case "$R" in
+        OK:*)  : ;;
+        EXC:*) : ;; # Proxy lebt; Ziel-Problem wird im Proxy-Log gefuehrt
+        *)     restart_proxy "Proxy antwortet nicht auf Port 1502 ($R)" ;;
+    esac
 
-    # 3) BLUESUN PCS-Link: SOC (0x1140 = 4416) - nur im Split-Modus relevant
+    # 3) BLUESUN PCS-Link: SOC (0x1140 = 4416, FC04) - nur im Split-Modus
     MODE=$(cat /etc/tesvolt_proxy_mode 2>/dev/null)
     if [ "$MODE" = "split" ] && [ -n "$BLUESUN_IP" ]; then
-        SOC_B=$(modbus_cli tcp "$BLUESUN_IP" -u 1 -r 4416 -t s16 2>/dev/null)
-        if [ -z "$SOC_B" ]; then
-            BS_FAIL=$((BS_FAIL + 1))
-            logmsg "BLUESUN nicht erreichbar ($BS_FAIL/$BS_FAIL_LIMIT)"
-            if [ "$BS_FAIL" -ge "$BS_FAIL_LIMIT" ]; then
-                failsafe "BLUESUN ${BS_FAIL_LIMIT}x nicht erreichbar"
-                BS_FAIL=0
-            fi
-        else
-            BS_FAIL=0
-        fi
+        SOC_B=$(lua "$MB" read "$BLUESUN_IP" 502 1 4 4416 2>/dev/null)
+        case "$SOC_B" in
+            OK:*|EXC:*) BS_FAIL=0 ;;
+            *)
+                BS_FAIL=$((BS_FAIL + 1))
+                logmsg "BLUESUN nicht erreichbar ($BS_FAIL/$BS_FAIL_LIMIT)"
+                if [ "$BS_FAIL" -ge "$BS_FAIL_LIMIT" ]; then
+                    failsafe "BLUESUN ${BS_FAIL_LIMIT}x nicht erreichbar"
+                    BS_FAIL=0
+                fi
+                ;;
+        esac
     fi
 
     # 4) Konfigdateien reparieren
