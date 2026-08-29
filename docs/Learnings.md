@@ -29,6 +29,8 @@
 | 2026-08-29 | RUTX11/BusyBox | BusyBox-wget auf RUTOS kann KEINE --header Option | Minimal-wget im ROM | Fuer GitHub-API-Downloads immer curl nutzen (auf RUTX11 vorinstalliert: /usr/bin/curl); github_update.sh nutzt curl-first mit wget-Fallback |
 | 2026-08-29 | RUTOS/Dateisystem | curl (23) write error beim Download nach /usr/bin | / ist squashfs READ-ONLY (df: /dev/root 100%, ro); beschreibbar sind NUR /etc und /usr/local (Overlay ubifs, 83 MB) sowie /tmp und /var (RAM) | ALLE Deployments umgestellt: Skripte -> /usr/local/bin, Web-UI -> /usr/local/www, Konfig -> /etc; /www und /usr/bin sind auf RUTOS NICHT beschreibbar |
 | 2026-08-29 | RUTOS/Web-UI | /www ist read-only, Standard-uhttpd gehoert der RUTOS-WebUI (Vuci) | squashfs + belegter Port 80 | Eigene uhttpd-Instanz 'emsproxy' via uci: Port 8080, home=/usr/local/www, cgi_prefix=/cgi-bin; Setup-UI erreichbar unter http://ROUTER:8080/setup.html |
+| 2026-08-29 | RUTOS/CGI | Setup-UI speicherte nicht: CGIs liefern OK, aber /etc/tesvolt_* wurden nie geschrieben | uhttpd fuehrt CGIs unter RUTOS als User 'uhttpd' (uid 575) aus, NICHT als root -> kein Schreibrecht auf /etc; QUERY_STRING und sed-Parsing waren korrekt (debug.cgi) | github_update.sh legt alle Konfigdateien /etc/tesvolt_* an und setzt chown uhttpd:uhttpd + chmod 664 (Truncate auf eigene Datei braucht kein Schreibrecht auf /etc-Verzeichnis) |
+| 2026-08-29 | BLUESUN/UDAN-EMS | Ansteuerung erfolgt NICHT direkt an die PCS, sondern ueber das UDAN-EMS; bisheriges Mapping SetPower_B=0x1144 ist FALSCH (0x114x-Bereich ist read-only, FC04; 0x1140=System-SOC) | Annahme aus altem Mapping; EMS/HMI-Registerliste v1.18 zeigt Schreibpfad im Steuerblock 0x1500 | Zwei Kandidaten: (A) 0x1500=2 manuell + 0x1501 Kategorie (1=Laden/2=Entladen/3=Standby) + 0x1502 ExpectedPower (0,1 kW) oder (B) 0x1530/0x1531 PCS-direkt (-3000..+3000 kW, Offset 3000, 1 kW); OFFEN: Herstellerfreigabe abwarten, erst dann Codeaenderung in modbus_proxy.lua/powersplit.lua |
 
 ## Regeln (dauerhaft gueltig)
 
@@ -40,3 +42,4 @@
 6. Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo - Konfiguration nur ueber die Setup-UI.
 7. GitHub-Token fuer Self-Update nur auf dem Router in /etc/github_token (chmod 600) - niemals ins Repo.
 8. Auf dem Router nur nach /usr/local/bin, /usr/local/www und /etc deployen - / ist read-only.
+9. CGIs laufen als User 'uhttpd' - Konfigdateien muessen dem uhttpd-User gehoeren (Update-Skript setzt Rechte automatisch).
