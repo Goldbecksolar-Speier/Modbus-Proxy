@@ -5,6 +5,15 @@
 <h1>EMS Proxy Setup</h1>
 
 <div>
+  <h3>Proxy Control</h3>
+  <button id="start_btn">Start</button>
+  <button id="stop_btn">Stop</button>
+  <b id="proxy_status">Status: ...</b><br>
+  <label><input type="checkbox" id="sim_mode"> Simulation (Fantasiewerte, ohne Geraete)</label>
+  <small>Start/Stop wird vom Watchdog innerhalb von ca. 5-10 s umgesetzt.</small>
+</div>
+
+<div>
   <h3>Power Mode</h3>
   <label><input type="checkbox" id="mode_split"> Split Mode</label>
 </div>
@@ -32,6 +41,25 @@
 </div>
 
 <script>
+function refreshStatus() {
+  fetch("/cgi-bin/proxy_ctl.cgi?action=status")
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var en  = /enabled=1/.test(t);
+      var run = /running=1/.test(t);
+      var sim = /sim=1/.test(t);
+      var el  = document.getElementById("proxy_status");
+      var txt, col;
+      if (!en)      { txt = "GESTOPPT (per UI)"; col = "#c00"; }
+      else if (run) { txt = "LAEUFT";            col = "#080"; }
+      else          { txt = "STARTET...";        col = "#c80"; }
+      if (sim) txt += " [SIMULATION]";
+      el.innerText = "Status: " + txt;
+      el.style.color = col;
+    })
+    .catch(function () {});
+}
+
 function loadConfig() {
   fetch("/cgi-bin/get_mode.cgi")
     .then(function (r) { return r.text(); })
@@ -40,7 +68,7 @@ function loadConfig() {
     })
     .catch(function () {});
 
-  ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b"].forEach(function (name) {
+  ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b", "sim"].forEach(function (name) {
     fetch("/cgi-bin/get_param.cgi?name=" + name)
       .then(function (r) { return r.text(); })
       .then(function (v) {
@@ -50,6 +78,7 @@ function loadConfig() {
         if (name === "split_mode") document.getElementById("split_mode").value = v;
         if (name === "ip_t") document.getElementById("ip_tesvolt").value = v;
         if (name === "ip_b") document.getElementById("ip_bluesun").value = v;
+        if (name === "sim") document.getElementById("sim_mode").checked = (v === "1");
       })
       .catch(function () {});
   });
@@ -62,12 +91,14 @@ function saveConfig() {
   var capB  = document.getElementById("cap_b").value;
   var ipT   = document.getElementById("ip_tesvolt").value;
   var ipB   = document.getElementById("ip_bluesun").value;
+  var sim   = document.getElementById("sim_mode").checked ? "1" : "0";
 
   Promise.all([
     fetch("/cgi-bin/set_mode.cgi?mode=" + mode),
     fetch("/cgi-bin/set_split.cgi?split=" + split),
     fetch("/cgi-bin/set_params.cgi?cap_t=" + capT + "&cap_b=" + capB),
-    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB)
+    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB),
+    fetch("/cgi-bin/set_sim.cgi?sim=" + sim)
   ])
     .then(function () {
       document.getElementById("save_status").innerText = "Gespeichert.";
@@ -78,7 +109,15 @@ function saveConfig() {
 }
 
 document.getElementById("save_btn").addEventListener("click", saveConfig);
+document.getElementById("start_btn").addEventListener("click", function () {
+  fetch("/cgi-bin/proxy_ctl.cgi?action=start").then(refreshStatus);
+});
+document.getElementById("stop_btn").addEventListener("click", function () {
+  fetch("/cgi-bin/proxy_ctl.cgi?action=stop").then(refreshStatus);
+});
 loadConfig();
+refreshStatus();
+setInterval(refreshStatus, 5000);
 </script>
 
 </body>

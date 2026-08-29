@@ -11,6 +11,13 @@
 --                 verteilt; BLUESUN erhaelt SetPower_B (0x1144, x100)
 --                 und Mode (0x1143)
 --
+-- Simulation (/etc/tesvolt_sim = 1):
+--   * Proxy beantwortet ALLE Anfragen selbst mit plausiblen
+--     Fantasiewerten - KEINE Verbindung zu echten Geraeten.
+--   * FC06/FC16-Schreibwerte werden gemerkt und beim Lesen
+--     zurueckgegeben (Roundtrip-Test fuer die UI).
+--   * Zum Testen der Status-/Setup-UI ohne angeschlossene Batterien.
+--
 -- Konfiguration:
 --   * KEINE fest kodierten IPs. IPs kommen ausschliesslich aus
 --     /etc/tesvolt_ip_t und /etc/tesvolt_ip_b (Setup-UI: setup.html).
@@ -37,6 +44,8 @@ local CFG = {
 }
 
 -- BLUESUN-Registerkonstanten (siehe 0-EMS/HMI Modbus485 v1.18)
+-- ACHTUNG: Schreibpfad UDAN-EMS (0x1500ff vs 0x1530) noch in
+-- Herstellerklaerung - 0x1144 ist READ-ONLY und als Schreibziel FALSCH!
 local BS = {
   SOC      = 0x1140,  -- SOC_B
   SETPOWER = 0x1144,  -- SetPower_B, Skalierung x100
@@ -71,6 +80,7 @@ end
 
 local function get_mode()       return read_file("/etc/tesvolt_proxy_mode", "passthrough") end
 local function get_split_mode() return read_file("/etc/tesvolt_split_mode", "capacity") end
+local function get_sim()        return read_file("/etc/tesvolt_sim", "0") == "1" end
 
 local function get_caps()
   local ct = tonumber(read_file("/etc/tesvolt_cap_t", "0")) or 0
@@ -144,6 +154,51 @@ local function mb_write(ip, addr, value)
   return true
 end
 
+-- ------------------------- Simulation --------------------------------
+-- Fantasiewerte fuer UI-Tests ohne echte Geraete.
+-- FC06/FC16-Schreibwerte landen in sim_written und werden beim
+-- naechsten Lesen zurueckgegeben.
+local sim_written = {}
+
+local function sim_value(addr)
+  if sim_written[addr] ~= nil then return sim_written[addr] end
+  local t = os.time()
+  if addr == 0 then
+    -- 30001 SOC Tesvolt: pendelt langsam zwischen ~35 und ~75 %
+    return 55 + math.floor(20 * math.sin(t / 120))
+  elseif addr == 4 then
+    -- 30005 SetPower: 0 bis beschrieben
+    return 0
+  end
+  -- generisch: deterministisch pro Adresse, aendert sich alle 15 s
+  return (addr * 13 + math.floor(t / 15) * 7) % 1000
+end
+
+local function sim_response(body)
+  local fc   = body:byte(1)
+  local addr = u16(body:byte(2), body:byte(3))
+  if fc == 3 or fc == 4 then
+    local count = u16(body:byte(4), body:byte(5))
+    if count < 1 or count > 125 then return string.char(fc + 0x80, 3) end
+    local data = ""
+    for i = 0, count - 1 do
+      local v = sim_value(addr + i) % 65536
+      data = data .. string.char(b_hi(v), b_lo(v))
+    end
+    return string.char(fc, count * 2) .. data
+  elseif fc == 6 then
+    sim_written[addr] = u16(body:byte(4), body:byte(5))
+    return body -- Echo gemaess Modbus-Norm FC06
+  elseif fc == 16 then
+    local count = u16(body:byte(4), body:byte(5))
+    for i = 0, count - 1 do
+      sim_written[addr + i] = u16(body:byte(7 + i * 2), body:byte(8 + i * 2))
+    end
+    return string.char(16, body:byte(2), body:byte(3), body:byte(4), body:byte(5))
+  end
+  return string.char(fc + 0x80, 1) -- Illegal Function
+end
+
 -- ------------------------- Split-Logik ------------------------------
 local bluesun_fail_count = 0
 local BLUESUN_FAIL_LIMIT = 3
@@ -208,6 +263,7 @@ end
 
 -- ------------------------- Modbus TCP Server ------------------------
 local unconfigured_logged = false
+local sim_logged = false
 
 local function serve()
   load_ips()
@@ -215,8 +271,9 @@ local function serve()
   server:settimeout(1)
   log("EMS-Proxy gestartet auf Port " .. CFG.listen_port ..
       " (Tesvolt=" .. tostring(CFG.tesvolt_ip) ..
-      ", BLUESUN=" .. tostring(CFG.bluesun_ip) .. ")")
-  if not is_configured() then
+      ", BLUESUN=" .. tostring(CFG.bluesun_ip) ..
+      (get_sim() and ", SIMULATION AKTIV" or "") .. ")")
+  if not get_sim() and not is_configured() then
     log("WARNUNG: IPs nicht konfiguriert - bitte Setup aufrufen (setup.html). " ..
         "Alle Anfragen werden mit Exception 0x0A beantwortet.")
   end
@@ -238,7 +295,14 @@ local function serve()
           -- (Setup-UI kann so ohne Proxy-Neustart aktivieren)
           if not is_configured() then load_ips() end
 
-          if not is_configured() then
+          if get_sim() then
+            -- Simulationsmodus: Fantasiewerte, keine Geraete noetig
+            if not sim_logged then
+              log("SIMULATION: beantworte Anfragen mit Fantasiewerten")
+              sim_logged = true
+            end
+            resp_pdu = sim_response(body)
+          elseif not is_configured() then
             if not unconfigured_logged then
               log("Anfrage abgelehnt: IPs nicht konfiguriert (Exception 0x0A)")
               unconfigured_logged = true
