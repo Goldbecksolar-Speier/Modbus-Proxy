@@ -25,6 +25,7 @@
 | 2026-08-29 | Sicherheit | Proxy im unkonfigurierten Zustand darf nicht gegen Default-IPs senden | Fallback-IPs 192.168.1.40/50 koennten fremde Geraete treffen | Ohne /etc/tesvolt_ip_t antwortet der Proxy mit Modbus-Exception 0x0A (Gateway Path Unavailable) und loggt Warnung; IPs werden pro Request nachgeladen (Aktivierung ohne Neustart) |
 | 2026-08-29 | Dependencies | modbus_proxy.lua benoetigt luasocket (require 'socket') | Nicht Teil der RUTOS-Standardinstallation | Installer prueft opkg list-installed und installiert bei Bedarf: opkg update && opkg install luasocket |
 | 2026-08-29 | Verifikation | Tesvolt-Register SOC 9/10, Power 11/12, Watchdog 12/13 noch NICHT am Geraet verifiziert | Kein Router-/Anlagenzugriff aus der Entwicklungsumgebung | Verifikationsplan in docs/Umsetzungsplan.md Schritt 3; Ergebnisse hier als neue Zeilen nachtragen |
+| 2026-08-29 | Deployment | Router kann Updates direkt von GitHub ziehen (Tarball via wget/curl + tar, kein git noetig) | Viele Erweiterungen geplant, PowerShell-Weg nicht immer noetig | Neues Skript /usr/bin/github_update.sh (Branch als Parameter); Download nach /tmp (RAM); Konfigdateien /etc/tesvolt_* werden nie ueberschrieben; privates Repo: Token in /etc/github_token (chmod 600), NIE ins Repo committen |
 
 ## Regeln (dauerhaft gueltig)
 
@@ -34,3 +35,4 @@
 4. Keine automatischen Aenderungen an produktiven Systemen; Aenderungen vorher erklaeren.
 5. Jeder PowerShell-Aufruf wird in docs/PowerShell-Log.md dokumentiert (Datum, Befehl, Exitcode, Fehler, Korrektur).
 6. Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo - Konfiguration nur ueber die Setup-UI.
+7. GitHub-Token fuer Self-Update nur auf dem Router in /etc/github_token (chmod 600) - niemals ins Repo.
