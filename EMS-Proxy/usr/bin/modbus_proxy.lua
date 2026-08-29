@@ -9,6 +9,12 @@
 --                 verteilt; BLUESUN erhaelt SetPower_B (0x1144, x100)
 --                 und Mode (0x1143)
 --
+-- Konfiguration:
+--   * KEINE fest kodierten IPs. IPs kommen ausschliesslich aus
+--     /etc/tesvolt_ip_t und /etc/tesvolt_ip_b (Setup-UI: setup.html).
+--   * Solange keine IPs konfiguriert sind, antwortet der Proxy mit
+--     Modbus-Exception 0x0A (Gateway Path Unavailable) und loggt dies.
+--
 -- Failsafe:
 --   * BLUESUN 3x nicht erreichbar -> automatisch passthrough + SetPower_B=0
 --   * Fehler werden nach /var/log/ems_proxy.log geschrieben
@@ -19,9 +25,9 @@ local split  = dofile("/usr/bin/powersplit.lua")
 
 -- ------------------------- Konfiguration ----------------------------
 local CFG = {
-  listen_port = 1502,            -- Port fuer das Tesvolt EMS (Master)
-  tesvolt_ip  = "192.168.1.40",  -- wird aus /etc/tesvolt_ip_t ueberschrieben
-  bluesun_ip  = "192.168.1.50",  -- wird aus /etc/tesvolt_ip_b ueberschrieben
+  listen_port = 1502,   -- Port fuer das Tesvolt EMS (Master)
+  tesvolt_ip  = nil,    -- NUR aus /etc/tesvolt_ip_t (kein Fallback!)
+  bluesun_ip  = nil,    -- NUR aus /etc/tesvolt_ip_b (kein Fallback!)
   modbus_port = 502,
   unit_id     = 1,
   timeout_s   = 2,
@@ -71,8 +77,12 @@ local function get_caps()
 end
 
 local function load_ips()
-  CFG.tesvolt_ip = read_file("/etc/tesvolt_ip_t", CFG.tesvolt_ip)
-  CFG.bluesun_ip = read_file("/etc/tesvolt_ip_b", CFG.bluesun_ip)
+  CFG.tesvolt_ip = read_file("/etc/tesvolt_ip_t", nil)
+  CFG.bluesun_ip = read_file("/etc/tesvolt_ip_b", nil)
+end
+
+local function is_configured()
+  return CFG.tesvolt_ip ~= nil
 end
 
 -- ------------------------- Modbus TCP Client ------------------------
@@ -88,6 +98,7 @@ end
 
 -- Sendet einen Modbus-TCP-Request und liefert die Antwort-PDU
 local function mb_request(ip, pdu)
+  if ip == nil then return nil, "IP nicht konfiguriert" end
   local c = socket.tcp()
   c:settimeout(CFG.timeout_s)
   local ok, err = c:connect(ip, CFG.modbus_port)
@@ -122,6 +133,7 @@ end
 
 -- FC06: Einzelregister schreiben
 local function mb_write(ip, addr, value)
+  if ip == nil then return nil, "IP nicht konfiguriert" end
   if value < 0 then value = value + 65536 end -- 16-Bit-Zweierkomplement
   local pdu = string.char(6, b_hi(addr), b_lo(addr), b_hi(value), b_lo(value))
   local resp, err = mb_request(ip, pdu)
@@ -155,7 +167,10 @@ end
 -- Verarbeitet einen Schreibbefehl des EMS auf das SetPower-Register
 local function handle_setpower(p_req)
   local mode = get_mode()
-  if mode ~= "split" then
+  if mode ~= "split" or CFG.bluesun_ip == nil then
+    if mode == "split" and CFG.bluesun_ip == nil then
+      log("SPLIT angefordert, aber BLUESUN-IP nicht konfiguriert -> passthrough")
+    end
     return mb_write(CFG.tesvolt_ip, EMS.SETPOWER, p_req)
   end
 
@@ -190,12 +205,19 @@ local function handle_setpower(p_req)
 end
 
 -- ------------------------- Modbus TCP Server ------------------------
+local unconfigured_logged = false
+
 local function serve()
   load_ips()
   local server = assert(socket.bind("0.0.0.0", CFG.listen_port))
   server:settimeout(1)
   log("EMS-Proxy gestartet auf Port " .. CFG.listen_port ..
-      " (Tesvolt=" .. CFG.tesvolt_ip .. ", BLUESUN=" .. CFG.bluesun_ip .. ")")
+      " (Tesvolt=" .. tostring(CFG.tesvolt_ip) ..
+      ", BLUESUN=" .. tostring(CFG.bluesun_ip) .. ")")
+  if not is_configured() then
+    log("WARNUNG: IPs nicht konfiguriert - bitte Setup aufrufen (setup.html). " ..
+        "Alle Anfragen werden mit Exception 0x0A beantwortet.")
+  end
 
   while true do
     local client = server:accept()
@@ -210,7 +232,17 @@ local function serve()
           local addr = u16(body:byte(2), body:byte(3))
           local resp_pdu
 
-          if fc == 6 and addr == EMS.SETPOWER then
+          -- IPs bei jedem Request nachladen, falls noch unkonfiguriert
+          -- (Setup-UI kann so ohne Proxy-Neustart aktivieren)
+          if not is_configured() then load_ips() end
+
+          if not is_configured() then
+            if not unconfigured_logged then
+              log("Anfrage abgelehnt: IPs nicht konfiguriert (Exception 0x0A)")
+              unconfigured_logged = true
+            end
+            resp_pdu = string.char(fc + 0x80, 0x0A) -- Gateway Path Unavailable
+          elseif fc == 6 and addr == EMS.SETPOWER then
             local val = u16(body:byte(4), body:byte(5))
             if val > 32767 then val = val - 65536 end
             handle_setpower(val)
