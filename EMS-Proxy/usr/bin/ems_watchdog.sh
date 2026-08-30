@@ -17,11 +17,22 @@
 #  * WICHTIG: EXC:<n> heisst der Proxy LEBT (Modbus-Exception ist eine
 #    gueltige Antwort, z.B. Ziel-Batterie nicht erreichbar). Nur bei
 #    ERR:* (connect refused / timeout) wird der Proxy neu gestartet.
+#  * NEU: 24h-Verlaufs-Sampler - alle 5 min werden die UI-Register
+#    ueber den Proxy gelesen und nach /tmp/ems_history.csv geschrieben
+#    (RAM, flash-schonend; Format ts;reg;rohwert; Pruning auf 24 h).
+#    status.html laedt diese Historie via get_history.cgi.
 # =====================================================================
 
 LOG="/var/log/ems_watchdog.log"
 PROXY="/usr/local/bin/modbus_proxy.lua"
 MB="/usr/local/bin/mb_cli.lua"
+
+# Historie: reg:fc:addr (Adresse = Proxy-Adressraum wie in status.html)
+HIST="/tmp/ems_history.csv"
+HIST_BUCKET_FILE="/tmp/ems_history.bucket"
+HIST_REGS="30001:4:0 30003:4:2 30004:4:3 30005:4:4 30007:4:6 30008:4:7 30011:4:10 30015:4:14 40003:3:2 40004:3:3"
+HIST_WINDOW=86400
+HIST_BUCKET_S=300
 
 BS_FAIL=0
 BS_FAIL_LIMIT=3
@@ -61,6 +72,31 @@ failsafe() {
     # SetPower_B=0 (Register 0x1144 = 4420; ACHTUNG: Schreibpfad UDAN-EMS
     # 0x1500/0x1530 noch in Herstellerklaerung - Register ggf. anpassen)
     lua "$MB" write "$BLUESUN_IP" 502 1 4420 0 >/dev/null 2>&1
+}
+
+# --- 24h-Historie: alle 5 min ein Sample pro Register ueber den Proxy ---
+sample_history() {
+    NOW=$(date +%s)
+    BUCKET=$(( NOW / HIST_BUCKET_S * HIST_BUCKET_S ))
+    LAST=$(cat "$HIST_BUCKET_FILE" 2>/dev/null)
+    [ "$BUCKET" = "$LAST" ] && return
+    echo "$BUCKET" > "$HIST_BUCKET_FILE"
+    for ENTRY in $HIST_REGS; do
+        REG=${ENTRY%%:*}
+        REST=${ENTRY#*:}
+        FC=${REST%%:*}
+        ADDR=${REST#*:}
+        R=$(lua "$MB" read 127.0.0.1 1502 1 "$FC" "$ADDR" 2>/dev/null)
+        case "$R" in
+            OK:*) echo "$BUCKET;$REG;${R#OK:}" >> "$HIST" ;;
+        esac
+    done
+    # Pruning: nur die letzten 24 h behalten (max ~2880 Zeilen)
+    CUT=$(( NOW - HIST_WINDOW ))
+    if [ -f "$HIST" ]; then
+        awk -F';' -v c="$CUT" '$1 >= c' "$HIST" > "$HIST.tmp" && mv "$HIST.tmp" "$HIST"
+        chmod 644 "$HIST"
+    fi
 }
 
 logmsg "Watchdog gestartet"
@@ -107,6 +143,9 @@ while true; do
         EXC:*) : ;; # Proxy lebt; Ziel-Problem wird im Proxy-Log gefuehrt
         *)     restart_proxy "Proxy antwortet nicht auf Port 1502 ($R)" ;;
     esac
+
+    # 2b) 24h-Historie sampeln (alle 5 min, siehe sample_history)
+    sample_history
 
     # 3) BLUESUN PCS-Link: SOC (0x1140 = 4416, FC04) - nur im Split-Modus
     #    und NICHT im Simulationsmodus (keine echten Geraete!)

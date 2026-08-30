@@ -169,7 +169,7 @@
 
 <!-- ================= VERLAUFSKURVEN: 24 h in 5-min-Schritten ================= -->
 <div class="panel hist-panel">
-  <h3>Verlauf (24 h, 5-min-Raster) <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
+  <h3>Verlauf (24 h, 5-min-Raster) <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird auf dem Router gesammelt (Watchdog, /tmp) und beim Seitenaufruf geladen; Router-Reboot leert die Historie</span></h3>
   <div id="hist_rows"></div>
   <div class="hist-axis" id="hist_axis"></div>
   <div class="hist-legend">
@@ -213,7 +213,11 @@ var EXC_TEXT = {
   11: "Ziel (Batterie) nicht erreichbar"
 };
 
-// ---------------- Verlaufs-Historie (localStorage) ----------------
+// ---------------- Verlaufs-Historie ----------------
+// Primaere Quelle: der ROUTER (Watchdog sampelt alle 5 min nach
+// /tmp/ems_history.csv, Auslieferung via get_history.cgi). Damit sind
+// die Kurven nach jedem Seitenaufruf sofort gefuellt - unabhaengig von
+// Browser/Geraet. localStorage dient nur noch als Zusatzpuffer.
 // Struktur: { "<reg>": { "<bucketTs>": value, ... }, ... }
 // bucketTs = Unix-ms auf 5 Minuten gerundet. 24 h = 288 Buckets pro Register.
 var BUCKET_MS = 5 * 60 * 1000;
@@ -240,6 +244,29 @@ function histRecord(reg, num) {
 function histSave() {
   histPrune();
   try { localStorage.setItem(HIST_KEY, JSON.stringify(history_data)); } catch (e) {}
+}
+
+// Server-Historie vom Router laden (CSV: ts_sekunden;reg;rohwert)
+function loadServerHistory() {
+  return fetch("/cgi-bin/get_history.cgi")
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      t.split("\n").forEach(function (line) {
+        var p = line.trim().split(";");
+        if (p.length !== 3) return;
+        var ts = (+p[0]) * 1000;
+        var reg = +p[1];
+        var raw = +p[2];
+        if (isNaN(ts) || isNaN(reg) || isNaN(raw)) return;
+        var num = SIGNED_REGS[reg] ? toSigned(raw) : raw;
+        var bucket = Math.floor(ts / BUCKET_MS) * BUCKET_MS;
+        if (!history_data[reg]) history_data[reg] = {};
+        history_data[reg][bucket] = num;   // Router-Wert gewinnt
+      });
+      histSave();
+      renderHistoryAll();
+    })
+    .catch(function () { /* Router-Historie nicht verfuegbar -> localStorage bleibt */ });
 }
 
 // ---------------- Zustand pro Register ----------------
@@ -641,8 +668,10 @@ function refresh() {
 buildTable();
 buildHistory();
 renderHistoryAll();
+loadServerHistory();
 refresh();
 setInterval(refresh, 10000);
+setInterval(loadServerHistory, BUCKET_MS);
 window.addEventListener("resize", renderHistoryAll);
 </script>
 
