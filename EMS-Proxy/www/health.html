@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMS Proxy - Service Health</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#111; color:#eee; margin:20px; }
+  h1 { font-size:1.3em; }
+  table { border-collapse: collapse; margin-bottom:20px; min-width:420px; }
+  th, td { border:1px solid #444; padding:6px 12px; text-align:left; }
+  th { background:#222; }
+  .ok   { color:#4caf50; font-weight:bold; }
+  .bad  { color:#f44336; font-weight:bold; }
+  .warn { color:#ff9800; font-weight:bold; }
+  pre { background:#000; border:1px solid #444; padding:10px; overflow-x:auto; font-size:0.85em; }
+  .btn { background:#333; color:#eee; border:1px solid #666; padding:6px 14px; cursor:pointer; margin-right:8px; }
+  .btn:hover { background:#555; }
+  #stopbanner { display:none; background:#f44336; color:#fff; padding:10px; margin-bottom:15px; font-weight:bold; }
+  .meta { color:#888; font-size:0.85em; }
+  a { color:#7ab8ff; }
+</style>
+</head>
+<body>
+<h1>EMS Proxy - Service Health</h1>
+<p class="meta">Auto-Refresh alle 5 s. Bei Ausfall wird der Zeitpunkt unten protokolliert.
+   Navigation: <a href="status.html">Status</a> | <a href="setup.html">Setup</a></p>
+
+<div id="stopbanner">SERVICE-STOPP ERKANNT!</div>
+
+<table>
+<thead><tr><th>Check</th><th>Wert</th><th>Status</th></tr></thead>
+<tbody id="health_table"></tbody>
+</table>
+
+<button class="btn" onclick="ctl('start')">Proxy Start</button>
+<button class="btn" onclick="ctl('stop')">Proxy Stop</button>
+<span id="ctl_result" class="meta"></span>
+
+<h2>Letzte Logzeilen (proxy/watchdog/oom/kill)</h2>
+<pre id="logbox">Lade...</pre>
+
+<h2>Ausfall-Protokoll (diese Browser-Sitzung)</h2>
+<pre id="outagebox">Noch keine Ausfaelle erkannt.</pre>
+
+<script>
+var lastRunning = null;
+var outages = [];
+
+function fmtUptime(s) {
+  s = parseInt(s, 10) || 0;
+  var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d + "d " + h + "h " + m + "m";
+}
+
+function row(name, value, ok, warnText) {
+  var cls = ok === true ? "ok" : (ok === false ? "bad" : "warn");
+  var txt = ok === true ? "OK" : (ok === false ? "FEHLER" : (warnText || "-"));
+  return "<tr><td>" + name + "</td><td>" + value + "</td><td class='" + cls + "'>" + txt + "</td></tr>";
+}
+
+function refresh() {
+  fetch("/cgi-bin/health.cgi").then(function(r){ return r.text(); }).then(function(t){
+    var kv = {}, logLines = [], inLog = false;
+    t.split("\n").forEach(function(line){
+      if (line.indexOf("LOG:") === 0) { inLog = true; return; }
+      if (inLog) { if (line.trim() !== "") logLines.push(line); return; }
+      var i = line.indexOf("=");
+      if (i > 0) kv[line.substring(0, i)] = line.substring(i + 1);
+    });
+
+    var running  = kv.proxy_running === "1";
+    var enabled  = kv.proxy_enabled === "1";
+    var wd       = kv.watchdog_running === "1";
+    var p1502    = kv.port_1502 === "1";
+    var p8080    = kv.port_8080 === "1";
+
+    var html = "";
+    html += row("Proxy-Prozess (modbus_proxy.lua)", running ? ("laeuft, PID " + kv.proxy_pid) : "gestoppt", running);
+    html += row("Soll-Zustand (enabled)", enabled ? "1 (soll laufen)" : "0 (gewollt gestoppt)", enabled ? true : null, "GESTOPPT (gewollt)");
+    html += row("Watchdog", wd ? ("laeuft, PID " + kv.watchdog_pid) : "gestoppt", wd);
+    html += row("Port 1502 (Modbus-Proxy)", p1502 ? "offen" : "zu", p1502);
+    html += row("Port 8080 (WebUI)", p8080 ? "offen" : "zu", p8080);
+    html += row("Simulationsmodus", kv.sim === "1" ? "AN" : "aus", kv.sim === "1" ? null : true, "SIMULATION");
+    html += row("Router-Uptime", fmtUptime(kv.uptime_s), true);
+    html += row("Freier Speicher", (kv.mem_avail_kb || "0") + " kB", parseInt(kv.mem_avail_kb, 10) > 10000);
+    html += row("Load (1 min)", kv.load1 || "-", true);
+    html += row("Router-Zeit", kv.now || "-", true);
+    document.getElementById("health_table").innerHTML = html;
+
+    document.getElementById("logbox").textContent = logLines.length ? logLines.join("\n") : "(keine passenden Logzeilen)";
+
+    // Stopp-Erkennung: war an, jetzt aus, obwohl enabled=1
+    var banner = document.getElementById("stopbanner");
+    if (lastRunning === true && !running && enabled) {
+      var ts = new Date().toLocaleString();
+      outages.push(ts + "  Proxy-Stopp erkannt (enabled=1, Prozess weg). Letzte Logzeilen:\n  " + logLines.slice(-5).join("\n  "));
+      document.getElementById("outagebox").textContent = outages.join("\n\n");
+    }
+    banner.style.display = (!running && enabled) ? "block" : "none";
+    lastRunning = running;
+  }).catch(function(e){
+    document.getElementById("logbox").textContent = "health.cgi nicht erreichbar: " + e;
+    var banner = document.getElementById("stopbanner");
+    banner.textContent = "WEBUI/CGI NICHT ERREICHBAR!";
+    banner.style.display = "block";
+  });
+}
+
+function ctl(action) {
+  fetch("/cgi-bin/proxy_ctl.cgi?action=" + action)
+    .then(function(r){ return r.text(); })
+    .then(function(t){ document.getElementById("ctl_result").textContent = t.trim() + " (Watchdog setzt in ~5 s um)"; refresh(); })
+    .catch(function(e){ document.getElementById("ctl_result").textContent = "Fehler: " + e; });
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
