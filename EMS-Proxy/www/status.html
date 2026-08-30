@@ -7,6 +7,13 @@
   body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
   h1 { color: #1a3e6e; }
   h2 { color: #1a3e6e; border-bottom: 2px solid #1a3e6e; padding-bottom: 4px; }
+  /* Kopfzeile: Titel links, Navigation oben rechts */
+  .head-wrap { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+  .head-nav { font-size: 14px; }
+  .head-nav a { color: #1a3e6e; font-weight: bold; text-decoration: none;
+                border: 1px solid #1a3e6e; border-radius: 6px; padding: 4px 12px; margin-left: 8px;
+                background: #fff; }
+  .head-nav a:hover { background: #1a3e6e; color: #fff; }
   .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; color: #fff; font-weight: bold; }
   .badge.pass  { background: #2e7dd1; }
   .badge.split { background: #d17f2e; }
@@ -77,7 +84,13 @@
 </style>
 </head>
 <body>
-<h1>EMS Proxy Status</h1>
+<div class="head-wrap">
+  <h1>EMS Proxy Status</h1>
+  <div class="head-nav">
+    <a href="setup.html">Setup</a>
+    <a href="health.html">Service Health</a>
+  </div>
+</div>
 
 <div>
   <span id="mode_display" class="badge pass">Lade Modus...</span>
