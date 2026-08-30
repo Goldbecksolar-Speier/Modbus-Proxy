@@ -40,6 +40,7 @@
 | 2026-08-29 | Feature/Grid-Limit | Maximale Netzanschlussleistung (Laden/Entladen) darf im Split-Modus nicht ueberschritten werden - die Rest-Umverteilung in powersplit.lua konnte die Summe sonst wieder ueber das Limit heben | Netzanschluss wuerde ueberlastet; Limit aendert sich dynamisch (PV-Einspeisung), das Tesvolt EMS kennt es ggf. in Reg 40003/40004 | Wirksames Limit = min(Setup-kW aus /etc/tesvolt_grid_max_chg/_dis, optional EMS-Reg 40003/40004 per Checkbox - default AUS, Einheit/Skalierung UNVERIFIZIERT); Clamp VOR dem Split + proportionale Sicherung NACH der Umverteilung; greift NUR im Split-Modus (Passthrough = keine Eingriffe in Tesvolt-Steuerung); kein Limit gesetzt -> oranger Warnhinweis, Anlage laeuft |
 | 2026-08-29 | Architektur/CAN | Haengt die Tesvolt-Batterie per CAN direkt am EMS, ist diese Regelschleife fuer den Proxy UNSICHTBAR - Modbus-Proxy kann nur IP-Strecken abfangen | CAN ist ein eigener Feldbus, kein IP-Verkehr ueber den Router | Szenario B: Proxy setzt eine Ebene hoeher an (Marketer-Interface des EMS fuer den Tesvolt-Anteil, UDAN-EMS direkt fuer BLUESUN); Details + Regelkampf-Risiko in docs/Architektur-Szenarien.md; VOR Implementierung klaeren: Anbindung der Tesvolt-Batterie (CAN vs. Modbus TCP) |
 | 2026-08-29 | Messtechnik | Netzanschlusszaehler ist ein Janitza UMG 604 Pro - darueber bezieht das Tesvolt EMS seine Netzleistung; der Zaehler hat selbst Modbus-TCP-Gateway (Port 502) + RS485 | User-Info 2026-08-29; Zaehler-Doku kommt in die Knowledge-Struktur | Zusatzoption gegen Regelkampf: Proxy zwischen Zaehler und EMS, Zaehlerwerte um BLUESUN-Leistung korrigieren (nur mit Failsafe: bei Proxy-Ausfall muss EMS echte Werte sehen); siehe docs/Architektur-Szenarien.md |
+| 2026-08-30 | Feature/Health-UI | Eigene Health-Seite fuer Service-Ueberwachung: health.html (Auto-Refresh 5 s, Stopp-Erkennung mit Ausfall-Protokoll im Browser, Start/Stop-Buttons via proxy_ctl.cgi) + health.cgi (Proxy-PID, enabled-Flag, Watchdog-PID, Ports 1502/8080 via netstat, Uptime, MemAvailable, Load, logread-Auszug proxy/watchdog/oom/kill) | User-Wunsch 2026-08-30: pruefen koennen, ob/wann der Service stoppt | Branch feature/health-page; health.cgi ist rein lesend (Regel 4); Deploy wie ueblich via github_update.sh nach /usr/local/www + cgi-bin; Aufruf: http://ROUTER:8080/health.html |
 
 ## Regeln (dauerhaft gueltig)
 
@@ -49,7 +50,7 @@
 4. Keine automatischen Aenderungen an produktiven Systemen; Aenderungen vorher erklaeren.
 5. Jeder PowerShell-Aufruf wird in docs/PowerShell-Log.md dokumentiert (Datum, Befehl, Exitcode, Fehler, Korrektur).
 6. Keine realen Anlagenparameter (IPs, Kapazitaeten) im Repo - Konfiguration nur ueber die Setup-UI.
-7. GitHub-Token fuer Self-Update nur auf dem Router in /etc/github_token (chmod 600) - niemals ins Repo.
+7. GitHub-Token fuer Self-Update nur auf dem Router in /etc/github_token (chmod 600) - niemals ins Repo committen.
 8. Auf dem Router nur nach /usr/local/bin, /usr/local/www und /etc deployen - / ist read-only.
 9. CGIs laufen als User 'uhttpd' - Konfigdateien muessen dem uhttpd-User gehoeren (Update-Skript setzt Rechte automatisch).
 10. Tool-Existenz auf dem Zielsystem (RUTOS) immer mit command -v verifizieren, bevor ein Skript sie nutzt.
