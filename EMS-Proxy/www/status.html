@@ -340,6 +340,10 @@ function buildTable() {
 var dm_cfg = { source: "tesvolt", ip: "", unit: 2 };
 var tv_cfg = { ip: "", unit: 1 };
 
+function srcName() {
+  return (dm_cfg.source === "datamanager") ? "SMA Data Manager" : "Tesvolt EMS";
+}
+
 function buildSrcTable(tableId, map) {
   var tbody = document.querySelector("#" + tableId + " tbody");
   tbody.innerHTML = "";
@@ -429,6 +433,7 @@ function loadEmsSource() {
     .then(function (r) { return r.text(); })
     .then(function (v) {
       dm_cfg.source = v.trim() || "tesvolt";
+      updateModeBadge();
       var badge = document.getElementById("src_display");
       var dmPanel = document.getElementById("dm_panel");
       var tvPanel = document.getElementById("tv_panel");
@@ -672,7 +677,9 @@ var proxy_alive = null;     // null = noch unbekannt
 function updateModeBadge() {
   var el = document.getElementById("mode_display");
   var isSplit = (proxy_mode === "split");
-  var base = isSplit ? "Split Mode (Tesvolt + BLUESUN)" : "Passthrough Mode (nur Tesvolt)";
+  var base = isSplit
+    ? "Split Mode ueber Quelle: " + srcName() + " (Tesvolt + BLUESUN)"
+    : "Passthrough ueber Quelle: " + srcName();
   if (proxy_alive === null) {
     el.innerText = base;
     el.className = "badge " + (isSplit ? "split" : "pass");
