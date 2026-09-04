@@ -12,6 +12,13 @@
 --   OK:<wert>   Wert gelesen (s16)
 --   EXC:<code>  Modbus-Exception (10 = Proxy unkonfiguriert, 11 = Ziel down)
 --   ERR:<text>  Transportfehler (Proxy nicht erreichbar, Timeout)
+--
+-- TIMEOUTS (wichtig, sonst falsches ERR statt EXC 11!):
+--   * Connect zum Proxy: 1.5 s (Proxy tot -> schnell erkennen)
+--   * Antwort vom Proxy: 5 s - MUSS groesser sein als der
+--     Upstream-Timeout des Proxys zum Zielgeraet (CFG.timeout_s = 2 s),
+--     sonst gibt der CGI auf, BEVOR der Proxy seine EXC-11-Antwort
+--     (Ziel nicht erreichbar) senden kann -> Status-Badge faelschlich rot.
 -- =====================================================================
 local ok_socket, socket = pcall(require, "socket")
 
@@ -37,9 +44,10 @@ local function hi(v) return math.floor(v / 256) % 256 end
 local function lo(v) return v % 256 end
 
 local c = socket.tcp()
-c:settimeout(1.5)
+c:settimeout(1.5)                 -- Connect: Proxy tot -> schnell melden
 local ok, err = c:connect("127.0.0.1", 1502)
 if not ok then print("ERR:proxy " .. tostring(err)) os.exit(0) end
+c:settimeout(5)                   -- Antwort: laenger als Proxy-Upstream (2 s)
 
 local pdu  = string.char(fc, hi(addr), lo(addr), 0, 1)
 local mbap = string.char(0, 1, 0, 0, 0, #pdu + 1, 1)
