@@ -114,11 +114,24 @@
   </table>
 </div>
 
+<!-- ============ EMS-Quelle: Tesvolt EMS (nur sichtbar wenn Quelle=tesvolt) ============ -->
+<div class="panel" id="tv_panel" style="display:none; margin-bottom:16px;">
+  <h3>EMS-Quelle: Tesvolt EMS (Direktlesung Marketer-Interface, am Proxy vorbei)</h3>
+  <div style="font-size:12px;color:#666;margin-bottom:6px;">
+    ACHTUNG: Registerbelegung (SOC 9/10, Power 11/12, Watchdog 12/13) stammt aus der
+    Marketer-Doku und ist am Geraet noch NICHT verifiziert. Werte nur zur Diagnose nutzen.
+  </div>
+  <table id="tv_table">
+    <thead><tr><th>Reg</th><th>Signal</th><th>Wert</th><th>Status</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
 <div class="layout">
 
   <!-- ================= LINKE SPALTE: Tabelle + Parameter ================= -->
   <div class="col-main">
-    <h2 id="reg_heading">Register (live via Proxy Port 1502)</h2>
+    <h2 id="reg_heading">Geraete-Register (live via Proxy Port 1502)</h2>
     <div class="legend">
       <span style="background:#b7e4b0">OK</span>
       <span style="background:#ffe08a">Exception / unplausibel</span>
@@ -234,6 +247,16 @@ var DM_MAP = [
   { addr: 31395, words: 2, signed: false, name: "Momentane Batterieentladung",                unit: "W" }
 ];
 
+// Tesvolt EMS Marketer-Interface (Direktlesung an ip_t:502) -
+// Registerbelegung laut Marketer-Doku, am Geraet NOCH NICHT VERIFIZIERT.
+var TV_MAP = [
+  { addr: 9,     words: 1, signed: false, fc: 3, name: "SOC (Reg 9, unverifiziert)",              unit: "%" },
+  { addr: 11,    words: 1, signed: true,  fc: 3, name: "Power (Reg 11, signed, unverifiziert)",   unit: "" },
+  { addr: 12,    words: 1, signed: false, fc: 3, name: "Watchdog (Reg 12, unverifiziert)",        unit: "" },
+  { addr: 40003, words: 1, signed: false, fc: 3, name: "ChargeLimit (40003, unverifiziert)",      unit: "" },
+  { addr: 40004, words: 1, signed: false, fc: 3, name: "DischargeLimit (40004, unverifiziert)",   unit: "" }
+];
+
 var SIGNED_REGS = { 30005: true, 30015: true };
 
 // Plausibilitaetsgrenzen [min, max] - Werte ausserhalb werden gelb markiert
@@ -310,58 +333,63 @@ function buildTable() {
   });
 }
 
-// ---------------- SMA Data Manager (Direktlesung) ----------------
+// ---------------- Direktlesung EMS-Quelle (generisch fuer DM + Tesvolt) ----------------
 // Unit-ID 2 = Anlage (EDMx-Modbus-TI-de-16 Kap. 3.4.1); Unit-ID 1 nur Produktinfo.
 var dm_cfg = { source: "tesvolt", ip: "", unit: 2 };
+var tv_cfg = { ip: "", unit: 1 };
 
-function buildDmTable() {
-  var tbody = document.querySelector("#dm_table tbody");
+function buildSrcTable(tableId, map) {
+  var tbody = document.querySelector("#" + tableId + " tbody");
   tbody.innerHTML = "";
-  DM_MAP.forEach(function (e) {
+  var prefix = (tableId === "dm_table") ? "dm" : "tv";
+  map.forEach(function (e) {
     var tr = document.createElement("tr");
     tr.innerHTML =
       "<td>" + e.addr + "</td>" +
       "<td>" + e.name + "</td>" +
-      "<td class='val' id='dmval_" + e.addr + "'>-</td>" +
-      "<td id='dmst_" + e.addr + "' class='hm-stale'>kein Wert</td>";
+      "<td class='val' id='" + prefix + "val_" + e.addr + "'>-</td>" +
+      "<td id='" + prefix + "st_" + e.addr + "' class='hm-stale'>kein Wert</td>";
     tbody.appendChild(tr);
   });
 }
 
-function dmReadWord(addr) {
-  return fetch("/cgi-bin/test_read.cgi?ip=" + dm_cfg.ip + "&port=502&unit=" + dm_cfg.unit + "&fc=3&addr=" + addr)
+function srcReadWord(ip, unit, fc, addr) {
+  return fetch("/cgi-bin/test_read.cgi?ip=" + ip + "&port=502&unit=" + unit + "&fc=" + (fc || 3) + "&addr=" + addr)
     .then(function (r) { return r.text(); })
     .then(function (t) { return t.trim(); });
 }
 
-function dmReadEntry(idx) {
-  if (idx >= DM_MAP.length) return;
-  var e = DM_MAP[idx];
-  dmReadWord(e.addr).then(function (hiRes) {
-    var valEl = document.getElementById("dmval_" + e.addr);
-    var stEl  = document.getElementById("dmst_" + e.addr);
+// Generische sequenzielle Lesung einer Quell-Tabelle (dm oder tv)
+function srcReadEntry(prefix, map, ip, unit, idx) {
+  if (idx >= map.length) return;
+  var e = map[idx];
+  var next = function () { srcReadEntry(prefix, map, ip, unit, idx + 1); };
+  srcReadWord(ip, unit, e.fc, e.addr).then(function (hiRes) {
+    var valEl = document.getElementById(prefix + "val_" + e.addr);
+    var stEl  = document.getElementById(prefix + "st_" + e.addr);
+    if (!valEl || !stEl) { next(); return; }
     if (hiRes.indexOf("OK:") !== 0) {
       valEl.innerText = "-";
       stEl.innerText = hiRes;
       stEl.className = hiRes.indexOf("EXC:") === 0 ? "hm-warn" : "hm-err";
-      dmReadEntry(idx + 1);
+      next();
       return;
     }
     var hi = parseInt(hiRes.substring(3), 10);
     if (hi < 0) hi += 65536;   // mb_cli liefert s16
     if (e.words === 1) {
-      valEl.innerText = String(e.signed && hi > 32767 ? hi - 65536 : hi);
+      valEl.innerText = String(e.signed && hi > 32767 ? hi - 65536 : hi) + (e.unit ? " " + e.unit : "");
       stEl.innerText = "OK";
       stEl.className = "hm-ok";
-      dmReadEntry(idx + 1);
+      next();
       return;
     }
-    dmReadWord(e.addr + 1).then(function (loRes) {
+    srcReadWord(ip, unit, e.fc, e.addr + 1).then(function (loRes) {
       if (loRes.indexOf("OK:") !== 0) {
         valEl.innerText = "-";
         stEl.innerText = loRes;
         stEl.className = loRes.indexOf("EXC:") === 0 ? "hm-warn" : "hm-err";
-        dmReadEntry(idx + 1);
+        next();
         return;
       }
       var lo = parseInt(loRes.substring(3), 10);
@@ -378,7 +406,7 @@ function dmReadEntry(idx) {
         stEl.innerText = "OK";
         stEl.className = "hm-ok";
       }
-      dmReadEntry(idx + 1);
+      next();
     });
   });
 }
@@ -388,7 +416,7 @@ function dmReadEntry(idx) {
 function setPathLabels(isDm) {
   var tag = isDm ? " - Quelle Tesvolt-Pfad" : "";
   document.getElementById("reg_heading").innerText =
-    "Register (live via Proxy Port 1502)" + tag;
+    "Geraete-Register (live via Proxy Port 1502)" + tag;
   document.getElementById("hist_src").innerText = tag;
   document.getElementById("pw_src").innerText = tag;
   document.getElementById("soc_src").innerText = tag;
@@ -400,10 +428,12 @@ function loadEmsSource() {
     .then(function (v) {
       dm_cfg.source = v.trim() || "tesvolt";
       var badge = document.getElementById("src_display");
-      var panel = document.getElementById("dm_panel");
+      var dmPanel = document.getElementById("dm_panel");
+      var tvPanel = document.getElementById("tv_panel");
       if (dm_cfg.source === "datamanager") {
         badge.innerText = "Quelle: SMA Data Manager";
-        panel.style.display = "";
+        dmPanel.style.display = "";
+        tvPanel.style.display = "none";
         setPathLabels(true);
         return Promise.all([
           fetch("/cgi-bin/get_param.cgi?name=ip_dm").then(function (r) { return r.text(); }),
@@ -415,14 +445,27 @@ function loadEmsSource() {
             document.querySelector("#dm_table tbody").innerHTML =
               "<tr><td colspan='4' class='not-set'>Datamanager-IP nicht gesetzt (Setup-Seite)</td></tr>";
           } else {
-            buildDmTable();
-            dmReadEntry(0);
+            buildSrcTable("dm_table", DM_MAP);
+            srcReadEntry("dm", DM_MAP, dm_cfg.ip, dm_cfg.unit, 0);
           }
         });
       } else {
         badge.innerText = "Quelle: Tesvolt EMS";
-        panel.style.display = "none";
+        dmPanel.style.display = "none";
+        tvPanel.style.display = "";
         setPathLabels(false);
+        return fetch("/cgi-bin/get_param.cgi?name=ip_t")
+          .then(function (r) { return r.text(); })
+          .then(function (ip) {
+            tv_cfg.ip = ip.trim();
+            if (!tv_cfg.ip) {
+              document.querySelector("#tv_table tbody").innerHTML =
+                "<tr><td colspan='4' class='not-set'>Tesvolt-IP nicht gesetzt (Setup-Seite)</td></tr>";
+            } else {
+              buildSrcTable("tv_table", TV_MAP);
+              srcReadEntry("tv", TV_MAP, tv_cfg.ip, tv_cfg.unit, 0);
+            }
+          });
       }
     })
     .catch(function () {});
