@@ -48,6 +48,7 @@
 | 2026-09-04 | SSH | Login als admin@ schlaegt auf RUTOS fehl - dropbear kennt nur root; 'admin' ist NUR der WebUI-Login | Benutzerverwechslung | Immer root@ verwenden; authorized_keys liegt in /etc/dropbear/ (gilt nur fuer root) |
 | 2026-09-04 | Deployment | github_update.sh fehlte auf dem Test-System, obwohl Proxy und Watchdog liefen | Erstinstallation hatte das Skript nicht dauerhaft nach /usr/local/bin kopiert; erst der Stand feature/bluesun-setpoint kopiert es sich selbst mit | Bootstrap: curl -H "Authorization: token $(cat /etc/github_token)" von raw.githubusercontent.com nach /usr/local/bin + chmod +x; danach Update auf 45b0bb4 (feature/bluesun-setpoint) erfolgreich eingespielt |
 | 2026-09-04 | Feature/Test-UI | Separate Geraete-Testseite test.html (Branch feature/device-test-ui): BLUESUN dosiert direkt testen, waehrend der Proxy im Passthrough laeuft; Tesvolt und SMA read-only | Gefahrlose Geraeteverifikation ohne Eingriff ins Livesystem noetig (PR #2 Testplan) | Sicherheitsnetz: Limit 10 kW (/etc/tesvolt_test_max_kw), 200 ms Message-Abstand, Bestaetigungs-Checkbox, NOT-AUS-Button, Auto-Standby-Guard (bluesun_test_guard.sh) nach 60 s ohne Heartbeat |
+| 2026-09-04 | RUTOS/CGI | EMS-Quelle (SMA Datamanager) liess sich auf der Setup-Seite waehlen, wurde aber nicht gespeichert - Status zeigte weiter Tesvolt; set_ems.cgi meldete trotzdem "OK" | Neue Konfigdateien (/etc/tesvolt_ems_source, ip_dm, unit_dm, ip_sma) fehlten in der Rechte-Schleife von github_update.sh -> als User uhttpd nicht beschreibbar; Redirect-Fehler in ash bricht das Skript nicht ab | Rechte-Schleife erweitert (b84ed8c) + set_ems.cgi verifiziert jetzt den geschriebenen Inhalt und meldet FEHLER statt OK (befaac8); Regel: CGI-Schreiber muessen den Erfolg pruefen, nie blind OK melden |
 
 ## Regeln (dauerhaft gueltig)
 
@@ -65,3 +66,4 @@
 12. Requests an das UDAN-EMS (BLUESUN) immer mit min. 200 ms Abstand; Unit-ID aus /etc/tesvolt_unit_b (Default 10).
 13. Das UDAN-EMS hat keinen Watchdog - jeder Client, der Sollwerte schreibt, MUSS einen eigenen Failsafe (Standby+0kW) mitbringen.
 14. Vor jeder Router-Diagnose das Geraet verifizieren - es gibt mehrere RUTX11 (Test-System: 192.168.3.1).
+15. CGI-Skripte, die Konfigdateien schreiben, muessen den geschriebenen Inhalt verifizieren und Fehler melden - niemals blind "OK" ausgeben.
