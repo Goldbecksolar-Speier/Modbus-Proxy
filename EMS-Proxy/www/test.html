@@ -4,6 +4,7 @@
 <style>
 body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
 h1 { color: #1a3e6e; }
+h2 { color: #1a3e6e; font-size: 16px; border-bottom: 2px solid #1a3e6e; padding-bottom: 4px; }
 .nav { margin: 0 0 14px 0; }
 .nav a { display: inline-block; padding: 8px 20px; margin-right: 8px; background: #1a3e6e; color: #fff;
          text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; }
@@ -29,15 +30,51 @@ pre { background: #f4f4f4; padding: 8px; max-height: 200px; overflow: auto; }
 
 <p class="warn">Diese Seite spricht die Geraete DIREKT an (nicht ueber den Proxy).
 Der Proxy kann waehrenddessen im Passthrough weiterlaufen.
-Schreibbefehle gehen NUR an das BLUESUN/UDAN-EMS. Tesvolt und SMA sind read-only.</p>
+Schreibbefehle gehen NUR an das BLUESUN/UDAN-EMS. Alle anderen Geraete sind read-only.</p>
 
 <div>
   <button id="emergency">NOT-AUS (BLUESUN Standby + 0 kW)</button>
   <b id="guard_state"></b>
 </div>
 
+<h2>EMS-Quellen (steuernde Systeme)</h2>
+
 <fieldset>
-<legend><b>1. BLUESUN / UDAN-EMS</b> (IP aus Setup, Unit-ID aus /etc/tesvolt_unit_b, Port 502)</legend>
+<legend><b>1. Tesvolt EMS (Quelle, read-only)</b> (IP aus Setup: Tesvolt-EMS-IP, Fallback Tesvolt-Batterie-IP)</legend>
+IP: <input id="tve_ip" type="text" placeholder="aus Setup (ip_ems_t)"> Unit: <input id="tve_unit" type="number" value="1" style="width:50px"><br>
+<button class="tve_preset" data-addr="9">Reg 9 (SOC?)</button>
+<button class="tve_preset" data-addr="10">Reg 10</button>
+<button class="tve_preset" data-addr="11">Reg 11 (Power?)</button>
+<button class="tve_preset" data-addr="12">Reg 12 (Watchdog?)</button>
+<button class="tve_preset" data-addr="13">Reg 13</button>
+Adresse: <input id="tve_addr" type="number" style="width:80px"> FC: <select id="tve_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
+<button id="tve_read">Lesen</button>
+<p><small>Marketer-Interface des Tesvolt Energy Managers. Register 9-13 sind noch zu verifizieren
+(EN_TESVOLT_Energy_Manager_MarketerInterfaceModbusSpecifications).</small></p>
+<pre id="tve_out">(noch keine Ausgabe)</pre>
+</fieldset>
+
+<fieldset>
+<legend><b>2. SMA Data Manager (Quelle, read-only)</b> (IP aus Setup: ip_dm)</legend>
+IP: <input id="sma_ip" type="text" placeholder="aus Setup (ip_dm)"> Port: <input id="sma_port" type="number" value="502" style="width:60px"> Unit: <input id="sma_unit" type="number" value="2" style="width:50px"><br>
+<button class="sma_preset" data-addr="30775">30775 PV-Leistung (S32-Hi)</button>
+<button class="sma_preset" data-addr="30776">30776 (S32-Lo)</button>
+<button class="sma_preset" data-addr="30845">30845 Bat-SOC (U32-Hi)</button>
+<button class="sma_preset" data-addr="31249">31249 PCC-Leistung (S32-Hi)</button>
+<button class="sma_preset" data-addr="31393">31393 Bat-Ladung (U32-Hi)</button>
+<button class="sma_preset" data-addr="31395">31395 Bat-Entladung (U32-Hi)</button>
+Adresse: <input id="sma_addr" type="number" style="width:80px"> FC: <select id="sma_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
+<button id="sma_read">Lesen</button>
+<p><small>Register nach EDMx-Modbus-TI-de-16, Unit-ID 2 = Anlage (Unit-ID 1 = nur Produktinfo).
+mb_cli liest 1 Register (16 Bit); S32/U32-Werte bestehen aus 2 Registern -
+Hi- und Lo-Wort einzeln lesen (Wert = Hi*65536 + Lo). SMA-NaN: S32 = 0x80000000, U32 = 0xFFFFFFFF.</small></p>
+<pre id="sma_out">(noch keine Ausgabe)</pre>
+</fieldset>
+
+<h2>Geraete (Batterien / Wechselrichter - Ziele des Proxys)</h2>
+
+<fieldset>
+<legend><b>3. BLUESUN / UDAN-EMS</b> (IP aus Setup, Unit-ID aus /etc/tesvolt_unit_b, Port 502)</legend>
 <p>Vorzeichen-Konvention: <b>positiv = Entladen</b> (0x1501=2), <b>negativ = Laden</b> (0x1501=1). Aufloesung 0,1 kW. Limit: max. 10 kW (/etc/tesvolt_test_max_kw).</p>
 <label><input type="checkbox" id="bs_confirm"> Ich weiss, dass ich am ECHTEN Geraet schreibe</label><br>
 <button id="bs_status">Status lesen (0x1500-0x1505, read-only)</button>
@@ -52,33 +89,31 @@ Bleibt er 60 s aus (Browser zu, WLAN weg), schreibt der Router automatisch Stand
 </fieldset>
 
 <fieldset>
-<legend><b>2. Tesvolt (read-only)</b></legend>
-IP: <input id="tv_ip" type="text" placeholder="aus Setup"> Unit: <input id="tv_unit" type="number" value="1" style="width:50px"><br>
-<button class="tv_preset" data-addr="9">Reg 9 (SOC?)</button>
-<button class="tv_preset" data-addr="10">Reg 10</button>
-<button class="tv_preset" data-addr="11">Reg 11 (Power?)</button>
-<button class="tv_preset" data-addr="12">Reg 12 (Watchdog?)</button>
-<button class="tv_preset" data-addr="13">Reg 13</button>
+<legend><b>4. Tesvolt-Batterie (Geraet, read-only)</b> (IP aus Setup: Tesvolt-Batterie-IP)</legend>
+IP: <input id="tv_ip" type="text" placeholder="aus Setup (ip_t)"> Port: <input id="tv_port" type="number" value="502" style="width:60px"> Unit: <input id="tv_unit" type="number" value="1" style="width:50px"><br>
 Adresse: <input id="tv_addr" type="number" style="width:80px"> FC: <select id="tv_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
 <button id="tv_read">Lesen</button>
+<p><small>Direkte Abfrage der Tesvolt-Batterie / des PCS davor - NUR falls das Geraet selbst
+Modbus/TCP anbietet (Haken "Tesvolt-Batterie" im Setup). Ist die Batterie per CAN-Bus
+angebunden, liefert diese Sektion keine Antwort (EXC/Timeout ist dann normal).</small></p>
 <pre id="tv_out">(noch keine Ausgabe)</pre>
 </fieldset>
 
 <fieldset>
-<legend><b>3. SMA Data Manager (read-only)</b></legend>
-IP: <input id="sma_ip" type="text" placeholder="aus Setup (ip_dm)"> Port: <input id="sma_port" type="number" value="502" style="width:60px"> Unit: <input id="sma_unit" type="number" value="2" style="width:50px"><br>
-<button class="sma_preset" data-addr="30775">30775 PV-Leistung (S32-Hi)</button>
-<button class="sma_preset" data-addr="30776">30776 (S32-Lo)</button>
-<button class="sma_preset" data-addr="30845">30845 Bat-SOC (U32-Hi)</button>
-<button class="sma_preset" data-addr="31249">31249 PCC-Leistung (S32-Hi)</button>
-<button class="sma_preset" data-addr="31393">31393 Bat-Ladung (U32-Hi)</button>
-<button class="sma_preset" data-addr="31395">31395 Bat-Entladung (U32-Hi)</button>
-Adresse: <input id="sma_addr" type="number" style="width:80px"> FC: <select id="sma_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
-<button id="sma_read">Lesen</button>
-<p><small>Register nach EDMx-Modbus-TI-de-16, Unit-ID 2 = Anlage (Unit-ID 1 = nur Produktinfo).
-mb_cli liest 1 Register (16 Bit); S32/U32-Werte bestehen aus 2 Registern -
-Hi- und Lo-Wort einzeln lesen (Wert = Hi*65536 + Lo). SMA-NaN: S32 = 0x80000000, U32 = 0xFFFFFFFF.</small></p>
-<pre id="sma_out">(noch keine Ausgabe)</pre>
+<legend><b>5. SMA Wechselrichter (Tesvolt-Batterie, read-only)</b> (IP aus Setup: SMA-Wechselrichter-IP)</legend>
+IP: <input id="smw_ip" type="text" placeholder="aus Setup (ip_sma)"> Port: <input id="smw_port" type="number" value="502" style="width:60px"> Unit: <input id="smw_unit" type="number" value="3" style="width:50px"><br>
+<button class="smw_preset" data-addr="30201">30201 Zustand (U32-Hi)</button>
+<button class="smw_preset" data-addr="30775">30775 AC-Leistung (S32-Hi)</button>
+<button class="smw_preset" data-addr="30776">30776 (S32-Lo)</button>
+<button class="smw_preset" data-addr="30843">30843 Bat-Strom (S32-Hi)</button>
+<button class="smw_preset" data-addr="30845">30845 Bat-SOC (U32-Hi)</button>
+<button class="smw_preset" data-addr="30955">30955 Bat-Betriebsstatus (U32-Hi)</button>
+Adresse: <input id="smw_addr" type="number" style="width:80px"> FC: <select id="smw_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
+<button id="smw_read">Lesen</button>
+<p><small>VORLAEUFIGES Mapping (generische SMA-Batterie-WR-Register, z. B. Sunny Island / Sunny Boy Storage).
+Unit-ID beim SMA-WR typisch 3 (Geraet selbst); am Geraet gegenpruefen.
+Wird vervollstaendigt, sobald der genaue Geraetetyp feststeht.</small></p>
+<pre id="smw_out">(noch keine Ausgabe)</pre>
 </fieldset>
 
 <script>
@@ -149,41 +184,47 @@ function genericRead(ip, port, unit, fc, addr, outId) {
     .catch(function (e) { out(outId, "ERR:fetch " + e); });
 }
 
-document.getElementById("tv_read").addEventListener("click", function () {
-  genericRead(document.getElementById("tv_ip").value, 502,
-    document.getElementById("tv_unit").value,
-    document.getElementById("tv_fc").value,
-    document.getElementById("tv_addr").value, "tv_out");
-});
-Array.prototype.forEach.call(document.getElementsByClassName("tv_preset"), function (b) {
-  b.addEventListener("click", function () {
-    document.getElementById("tv_addr").value = b.getAttribute("data-addr");
-    document.getElementById("tv_read").click();
+// Generische Sektion verdrahten: Lesen-Button + Preset-Buttons
+function wireSection(prefix, portFixed) {
+  document.getElementById(prefix + "_read").addEventListener("click", function () {
+    var portEl = document.getElementById(prefix + "_port");
+    genericRead(document.getElementById(prefix + "_ip").value,
+      portFixed || (portEl ? portEl.value : 502),
+      document.getElementById(prefix + "_unit").value,
+      document.getElementById(prefix + "_fc").value,
+      document.getElementById(prefix + "_addr").value, prefix + "_out");
   });
-});
-
-document.getElementById("sma_read").addEventListener("click", function () {
-  genericRead(document.getElementById("sma_ip").value,
-    document.getElementById("sma_port").value,
-    document.getElementById("sma_unit").value,
-    document.getElementById("sma_fc").value,
-    document.getElementById("sma_addr").value, "sma_out");
-});
-Array.prototype.forEach.call(document.getElementsByClassName("sma_preset"), function (b) {
-  b.addEventListener("click", function () {
-    document.getElementById("sma_addr").value = b.getAttribute("data-addr");
-    document.getElementById("sma_read").click();
+  Array.prototype.forEach.call(document.getElementsByClassName(prefix + "_preset"), function (b) {
+    b.addEventListener("click", function () {
+      document.getElementById(prefix + "_addr").value = b.getAttribute("data-addr");
+      document.getElementById(prefix + "_read").click();
+    });
   });
-});
+}
+wireSection("tve", 502);   // Tesvolt EMS (Quelle)
+wireSection("sma", null);  // SMA Data Manager
+wireSection("tv", null);   // Tesvolt-Batterie (Geraet)
+wireSection("smw", null);  // SMA Wechselrichter
 
-// Tesvolt-IP aus Setup vorbelegen
-fetch("/cgi-bin/get_param.cgi?name=ip_t").then(function (r) { return r.text(); })
-  .then(function (v) { document.getElementById("tv_ip").value = v.trim(); }).catch(function () {});
-// SMA-Datamanager-IP und Unit-ID aus Setup vorbelegen
-fetch("/cgi-bin/get_param.cgi?name=ip_dm").then(function (r) { return r.text(); })
-  .then(function (v) { if (v.trim()) document.getElementById("sma_ip").value = v.trim(); }).catch(function () {});
-fetch("/cgi-bin/get_param.cgi?name=unit_dm").then(function (r) { return r.text(); })
-  .then(function (v) { if (v.trim()) document.getElementById("sma_unit").value = v.trim(); }).catch(function () {});
+// IPs aus dem Setup vorbelegen
+function prefill(param, elId) {
+  fetch("/cgi-bin/get_param.cgi?name=" + param).then(function (r) { return r.text(); })
+    .then(function (v) {
+      v = v.trim();
+      if (v) document.getElementById(elId).value = v;
+    }).catch(function () {});
+}
+// Tesvolt EMS: ip_ems_t, Fallback ip_t
+fetch("/cgi-bin/get_param.cgi?name=ip_ems_t").then(function (r) { return r.text(); })
+  .then(function (v) {
+    v = v.trim();
+    if (v) { document.getElementById("tve_ip").value = v; }
+    else { prefill("ip_t", "tve_ip"); }
+  }).catch(function () { prefill("ip_t", "tve_ip"); });
+prefill("ip_t", "tv_ip");       // Tesvolt-Batterie
+prefill("ip_dm", "sma_ip");     // SMA Data Manager
+prefill("unit_dm", "sma_unit");
+prefill("ip_sma", "smw_ip");    // SMA Wechselrichter
 </script>
 </body>
 </html>
