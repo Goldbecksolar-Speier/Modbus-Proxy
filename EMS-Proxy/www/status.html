@@ -16,6 +16,8 @@
   .badge.pass  { background: #2e7dd1; }
   .badge.split { background: #d17f2e; }
   .badge.src   { background: #5a5a8a; }
+  .badge.okp   { background: #1a7a2e; }  /* Proxy erreichbar - EMS steuert ueber Proxy */
+  .badge.errp  { background: #c0392b; }  /* Proxy NICHT erreichbar */
   table { border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
   th, td { border: 1px solid #ccc; padding: 6px 12px; text-align: left; }
   th { background: #1a3e6e; color: #fff; }
@@ -661,6 +663,30 @@ function renderSummary() {
     " | " + ok + " OK / " + warn + " EXC/unplausibel / " + err + " Fehler / " + stale + " leer";
 }
 
+// ---------------- Proxy-Erreichbarkeit -> Badge gruen/rot ----------------
+// OK: und EXC: bedeuten "Proxy antwortet auf Port 1502" (EXC kommt VOM Proxy).
+// Nur Transportfehler (connection refused etc.) = Proxy nicht erreichbar.
+var proxy_mode = "";        // "split" | "passthrough"
+var proxy_alive = null;     // null = noch unbekannt
+
+function updateModeBadge() {
+  var el = document.getElementById("mode_display");
+  var isSplit = (proxy_mode === "split");
+  var base = isSplit ? "Split Mode (Tesvolt + BLUESUN)" : "Passthrough Mode (nur Tesvolt)";
+  if (proxy_alive === null) {
+    el.innerText = base;
+    el.className = "badge " + (isSplit ? "split" : "pass");
+    return;
+  }
+  if (proxy_alive) {
+    el.innerText = base + " - Proxy AKTIV (EMS steuert ueber Proxy Port 1502)";
+    el.className = "badge okp";
+  } else {
+    el.innerText = base + " - Proxy NICHT ERREICHBAR! (Sollwerte laufen NICHT ueber den Proxy)";
+    el.className = "badge errp";
+  }
+}
+
 function fmtKw(w) {
   return (w / 1000).toFixed(1);
 }
@@ -719,11 +745,16 @@ function updateSocBar(id, labelId, soc) {
 
 // Register SEQUENZIELL lesen (Proxy ist single-threaded; parallele
 // Requests wuerden sich stauen)
+var transport_ok_count = 0;   // OK: oder EXC: = Proxy antwortet
+
 function readAll(idx) {
   idx = idx || 0;
+  if (idx === 0) transport_ok_count = 0;
   if (idx >= EMS_MAP.length) {
     document.getElementById("last_update").innerText =
       "Aktualisiert: " + new Date().toLocaleTimeString();
+    proxy_alive = (transport_ok_count > 0);
+    updateModeBadge();
     renderSummary();
     renderPower();
     histSave();
@@ -737,6 +768,7 @@ function readAll(idx) {
       t = t.trim();
       var s = state[reg];
       if (t.indexOf("OK:") === 0) {
+        transport_ok_count++;
         var raw = parseInt(t.substring(3), 10);
         var num = isNaN(raw) ? null : (SIGNED_REGS[reg] ? toSigned(raw) : raw);
         s.num = num;
@@ -754,6 +786,7 @@ function readAll(idx) {
           s.status = "UNPLAUSIBEL (erwartet " + p[0] + ".." + p[1] + ")";
         }
       } else if (t.indexOf("EXC:") === 0) {
+        transport_ok_count++;   // Exception kommt VOM Proxy -> Proxy lebt
         var code = parseInt(t.substring(4), 10);
         s.num = null;
         s.cls = "hm-warn";
@@ -780,15 +813,8 @@ function loadMode() {
   return fetch("/cgi-bin/get_mode.cgi")
     .then(function (r) { return r.text(); })
     .then(function (mode) {
-      mode = mode.trim();
-      var el = document.getElementById("mode_display");
-      if (mode === "split") {
-        el.innerText = "Split Mode (Tesvolt + BLUESUN)";
-        el.className = "badge split";
-      } else {
-        el.innerText = "Passthrough Mode (nur Tesvolt)";
-        el.className = "badge pass";
-      }
+      proxy_mode = mode.trim();
+      updateModeBadge();
     })
     .catch(function () {
       document.getElementById("mode_display").innerText = "Modus unbekannt";
