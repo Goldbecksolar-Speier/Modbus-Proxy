@@ -7,9 +7,15 @@
   body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
   h1 { color: #1a3e6e; }
   h2 { color: #1a3e6e; border-bottom: 2px solid #1a3e6e; padding-bottom: 4px; }
+  .nav { margin: 0 0 14px 0; }
+  .nav a { display: inline-block; padding: 8px 20px; margin-right: 8px; background: #1a3e6e; color: #fff;
+           text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; }
+  .nav a:hover { background: #2e7dd1; }
+  .nav a.active { background: #2e7dd1; }
   .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; color: #fff; font-weight: bold; }
   .badge.pass  { background: #2e7dd1; }
   .badge.split { background: #d17f2e; }
+  .badge.src   { background: #5a5a8a; }
   table { border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
   th, td { border: 1px solid #ccc; padding: 6px 12px; text-align: left; }
   th { background: #1a3e6e; color: #fff; }
@@ -79,18 +85,38 @@
 <body>
 <h1>EMS Proxy Status</h1>
 
+<div class="nav">
+  <a href="/status.html" class="active">Status</a>
+  <a href="/setup.html">Setup</a>
+  <a href="/test.html">Geraete-Test</a>
+</div>
+
 <div>
   <span id="mode_display" class="badge pass">Lade Modus...</span>
+  <span id="src_display" class="badge src">Quelle: ...</span>
   <span id="last_update"></span>
   <span id="hm_summary"></span>
 </div>
 <div class="cfg" id="cfg_display"></div>
 
+<!-- ============ EMS-Quelle: SMA Data Manager (nur sichtbar wenn Quelle=datamanager) ============ -->
+<div class="panel" id="dm_panel" style="display:none; margin-bottom:16px;">
+  <h3>EMS-Quelle: SMA Data Manager (Direktlesung, am Proxy vorbei)</h3>
+  <div style="font-size:12px;color:#c80;margin-bottom:6px;">
+    Achtung: SMA-Registeradressen sind Standard-Profilwerte und am Geraet noch UNVERIFIZIERT
+    (geraetespezifische Modbus-Register-HTML des Data Managers pruefen).
+  </div>
+  <table id="dm_table">
+    <thead><tr><th>Reg</th><th>Signal</th><th>Wert</th><th>Status</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
 <div class="layout">
 
   <!-- ================= LINKE SPALTE: Tabelle + Parameter ================= -->
   <div class="col-main">
-    <h2>Register (live via Proxy Port 1502)</h2>
+    <h2 id="reg_heading">Register (live via Proxy Port 1502)</h2>
     <div class="legend">
       <span style="background:#b7e4b0">OK</span>
       <span style="background:#ffe08a">Exception / unplausibel</span>
@@ -194,6 +220,15 @@ var EMS_MAP = [
   { reg: 40004, name: "DischargeLimit_T", src: "Tesvolt DchgLimit",            unit: "" }
 ];
 
+// SMA Data Manager (ennexOS) - Standard-Profilregister, UNVERIFIZIERT!
+// S32/U32 = 2 Register (Hi+Lo), werden einzeln gelesen und kombiniert.
+var DM_MAP = [
+  { addr: 30775, words: 2, signed: true,  name: "AC-Wirkleistung gesamt", unit: "W" },
+  { addr: 30845, words: 2, signed: false, name: "Batterie-SOC",           unit: "%" },
+  { addr: 30865, words: 2, signed: true,  name: "Leistung Netzbezug",     unit: "W" },
+  { addr: 30867, words: 2, signed: true,  name: "Leistung Netzeinspeisung", unit: "W" }
+];
+
 var SIGNED_REGS = { 30005: true, 30015: true };
 
 // Plausibilitaetsgrenzen [min, max] - Werte ausserhalb werden gelb markiert
@@ -268,6 +303,113 @@ function buildTable() {
       "<td id='ok_" + e.reg + "'>-</td>";
     tbody.appendChild(tr);
   });
+}
+
+// ---------------- SMA Data Manager (Direktlesung) ----------------
+var dm_cfg = { source: "tesvolt", ip: "", unit: 3 };
+
+function buildDmTable() {
+  var tbody = document.querySelector("#dm_table tbody");
+  tbody.innerHTML = "";
+  DM_MAP.forEach(function (e) {
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + e.addr + "</td>" +
+      "<td>" + e.name + "</td>" +
+      "<td class='val' id='dmval_" + e.addr + "'>-</td>" +
+      "<td id='dmst_" + e.addr + "' class='hm-stale'>kein Wert</td>";
+    tbody.appendChild(tr);
+  });
+}
+
+function dmReadWord(addr) {
+  return fetch("/cgi-bin/test_read.cgi?ip=" + dm_cfg.ip + "&port=502&unit=" + dm_cfg.unit + "&fc=3&addr=" + addr)
+    .then(function (r) { return r.text(); })
+    .then(function (t) { return t.trim(); });
+}
+
+function dmReadEntry(idx) {
+  if (idx >= DM_MAP.length) return;
+  var e = DM_MAP[idx];
+  dmReadWord(e.addr).then(function (hiRes) {
+    var valEl = document.getElementById("dmval_" + e.addr);
+    var stEl  = document.getElementById("dmst_" + e.addr);
+    if (hiRes.indexOf("OK:") !== 0) {
+      valEl.innerText = "-";
+      stEl.innerText = hiRes;
+      stEl.className = hiRes.indexOf("EXC:") === 0 ? "hm-warn" : "hm-err";
+      dmReadEntry(idx + 1);
+      return;
+    }
+    var hi = parseInt(hiRes.substring(3), 10);
+    if (hi < 0) hi += 65536;   // mb_cli liefert s16
+    if (e.words === 1) {
+      valEl.innerText = String(e.signed && hi > 32767 ? hi - 65536 : hi);
+      stEl.innerText = "OK (unverifiziert)";
+      stEl.className = "hm-ok";
+      dmReadEntry(idx + 1);
+      return;
+    }
+    dmReadWord(e.addr + 1).then(function (loRes) {
+      if (loRes.indexOf("OK:") !== 0) {
+        valEl.innerText = "-";
+        stEl.innerText = loRes;
+        stEl.className = loRes.indexOf("EXC:") === 0 ? "hm-warn" : "hm-err";
+        dmReadEntry(idx + 1);
+        return;
+      }
+      var lo = parseInt(loRes.substring(3), 10);
+      if (lo < 0) lo += 65536;
+      var v = hi * 65536 + lo;
+      if (e.signed && v > 2147483647) v -= 4294967296;
+      // SMA NaN-Werte: 0x80000000 (S32) / 0xFFFFFFFF (U32)
+      if (v === -2147483648 || (!e.signed && v === 4294967295)) {
+        valEl.innerText = "NaN";
+        stEl.innerText = "kein Messwert (SMA NaN)";
+        stEl.className = "hm-warn";
+      } else {
+        valEl.innerText = v + (e.unit ? " " + e.unit : "");
+        stEl.innerText = "OK (unverifiziert)";
+        stEl.className = "hm-ok";
+      }
+      dmReadEntry(idx + 1);
+    });
+  });
+}
+
+function loadEmsSource() {
+  return fetch("/cgi-bin/get_param.cgi?name=ems_source")
+    .then(function (r) { return r.text(); })
+    .then(function (v) {
+      dm_cfg.source = v.trim() || "tesvolt";
+      var badge = document.getElementById("src_display");
+      var panel = document.getElementById("dm_panel");
+      var heading = document.getElementById("reg_heading");
+      if (dm_cfg.source === "datamanager") {
+        badge.innerText = "Quelle: SMA Data Manager";
+        panel.style.display = "";
+        heading.innerText = "Register (live via Proxy Port 1502) - Quelle Tesvolt-Pfad";
+        return Promise.all([
+          fetch("/cgi-bin/get_param.cgi?name=ip_dm").then(function (r) { return r.text(); }),
+          fetch("/cgi-bin/get_param.cgi?name=unit_dm").then(function (r) { return r.text(); })
+        ]).then(function (res) {
+          dm_cfg.ip = res[0].trim();
+          dm_cfg.unit = parseInt(res[1].trim(), 10) || 3;
+          if (!dm_cfg.ip) {
+            document.querySelector("#dm_table tbody").innerHTML =
+              "<tr><td colspan='4' class='not-set'>Datamanager-IP nicht gesetzt (Setup-Seite)</td></tr>";
+          } else {
+            buildDmTable();
+            dmReadEntry(0);
+          }
+        });
+      } else {
+        badge.innerText = "Quelle: Tesvolt EMS";
+        panel.style.display = "none";
+        heading.innerText = "Register (live via Proxy Port 1502)";
+      }
+    })
+    .catch(function () {});
 }
 
 // ---------------- Verlaufskurven (Flaechendiagramme) ----------------
@@ -634,6 +776,7 @@ function loadParams() {
 function refresh() {
   loadMode().then(function () {
     loadParams();
+    loadEmsSource();
     readAll(0);
   });
 }
