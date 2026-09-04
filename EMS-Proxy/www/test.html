@@ -2,10 +2,14 @@
 <html>
 <head><meta charset="UTF-8"><title>EMS Proxy - Geraete-Test</title>
 <style>
-body { font-family: sans-serif; margin: 16px; }
-fieldset { margin-bottom: 16px; }
-table { border-collapse: collapse; }
-td, th { border: 1px solid #999; padding: 4px 8px; font-size: 14px; }
+body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
+h1 { color: #1a3e6e; }
+.nav { margin: 0 0 14px 0; }
+.nav a { display: inline-block; padding: 8px 20px; margin-right: 8px; background: #1a3e6e; color: #fff;
+         text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; }
+.nav a:hover { background: #2e7dd1; }
+.nav a.active { background: #2e7dd1; }
+fieldset { margin-bottom: 16px; background: #fff; border: 1px solid #ccc; border-radius: 8px; }
 button { margin: 2px; }
 #emergency { background: #c00; color: #fff; font-weight: bold; font-size: 16px; padding: 8px 16px; }
 .warn { color: #c80; }
@@ -16,7 +20,13 @@ pre { background: #f4f4f4; padding: 8px; max-height: 200px; overflow: auto; }
 </head>
 <body>
 <h1>Geraete-Test (direkt, am Proxy vorbei)</h1>
-<p>Navigation: <a href="/status.html">Status</a> | <a href="/setup.html">Setup</a> | Test</p>
+
+<div class="nav">
+  <a href="/status.html">Status</a>
+  <a href="/setup.html">Setup</a>
+  <a href="/test.html" class="active">Geraete-Test</a>
+</div>
+
 <p class="warn">Diese Seite spricht die Geraete DIREKT an (nicht ueber den Proxy).
 Der Proxy kann waehrenddessen im Passthrough weiterlaufen.
 Schreibbefehle gehen NUR an das BLUESUN/UDAN-EMS. Tesvolt und SMA sind read-only.</p>
