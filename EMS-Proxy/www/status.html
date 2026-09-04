@@ -26,6 +26,7 @@
   .hm-stale { background: #e0e0e0; }  /* noch kein Wert */
   td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
   .not-set { color: #c80; font-weight: bold; }
+  .src-tag { font-size: 13px; font-weight: normal; color: #5a5a8a; }
 
   /* Parameter-Bereich: PowerSplit + Netzanschluss nebeneinander */
   .param-wrap { display: flex; gap: 30px; align-items: flex-start; flex-wrap: wrap; }
@@ -159,7 +160,7 @@
   <!-- ================= MITTLERE SPALTE: Power-Anzeige ================= -->
   <div class="col-power">
     <div class="panel">
-      <h3>Leistung</h3>
+      <h3>Leistung<span class="src-tag" id="pw_src"></span></h3>
       <div class="pw-big" id="pw_total_box">
         <div class="pw-val" id="pw_total">-</div>
         <div class="pw-unit">kW gesamt</div>
@@ -183,7 +184,7 @@
   <!-- ================= RECHTE SPALTE: SOC ================= -->
   <div class="col-soc">
     <div class="panel">
-      <h3>SOC</h3>
+      <h3>SOC<span class="src-tag" id="soc_src"></span></h3>
       <div class="bar-label">Tesvolt:</div>
       <div class="bar-wrap"><div id="soc_t_fill" class="bar-fill" style="background:#2e7dd1;"></div></div>
       <div class="bar-label">BLUESUN:</div>
@@ -195,7 +196,7 @@
 
 <!-- ================= VERLAUFSKURVEN: 24 h in 5-min-Schritten ================= -->
 <div class="panel hist-panel">
-  <h3>Verlauf (24 h, 5-min-Raster) <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
+  <h3>Verlauf (24 h, 5-min-Raster)<span class="src-tag" id="hist_src"></span> <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
   <div id="hist_rows"></div>
   <div class="hist-axis" id="hist_axis"></div>
   <div class="hist-legend">
@@ -377,6 +378,17 @@ function dmReadEntry(idx) {
   });
 }
 
+// Beschriftungen, die vom Proxy-Pfad (Port 1502, Tesvolt-Mapping) stammen,
+// bekommen bei Quelle=Datamanager den Zusatz "Quelle Tesvolt-Pfad".
+function setPathLabels(isDm) {
+  var tag = isDm ? " - Quelle Tesvolt-Pfad" : "";
+  document.getElementById("reg_heading").innerText =
+    "Register (live via Proxy Port 1502)" + tag;
+  document.getElementById("hist_src").innerText = tag;
+  document.getElementById("pw_src").innerText = tag;
+  document.getElementById("soc_src").innerText = tag;
+}
+
 function loadEmsSource() {
   return fetch("/cgi-bin/get_param.cgi?name=ems_source")
     .then(function (r) { return r.text(); })
@@ -384,11 +396,10 @@ function loadEmsSource() {
       dm_cfg.source = v.trim() || "tesvolt";
       var badge = document.getElementById("src_display");
       var panel = document.getElementById("dm_panel");
-      var heading = document.getElementById("reg_heading");
       if (dm_cfg.source === "datamanager") {
         badge.innerText = "Quelle: SMA Data Manager";
         panel.style.display = "";
-        heading.innerText = "Register (live via Proxy Port 1502) - Quelle Tesvolt-Pfad";
+        setPathLabels(true);
         return Promise.all([
           fetch("/cgi-bin/get_param.cgi?name=ip_dm").then(function (r) { return r.text(); }),
           fetch("/cgi-bin/get_param.cgi?name=unit_dm").then(function (r) { return r.text(); })
@@ -406,7 +417,7 @@ function loadEmsSource() {
       } else {
         badge.innerText = "Quelle: Tesvolt EMS";
         panel.style.display = "none";
-        heading.innerText = "Register (live via Proxy Port 1502)";
+        setPathLabels(false);
       }
     })
     .catch(function () {});
