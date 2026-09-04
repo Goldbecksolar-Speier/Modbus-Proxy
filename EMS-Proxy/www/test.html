@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>EMS Proxy - Geraete-Test</title>
+<style>
+body { font-family: sans-serif; margin: 16px; }
+fieldset { margin-bottom: 16px; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid #999; padding: 4px 8px; font-size: 14px; }
+button { margin: 2px; }
+#emergency { background: #c00; color: #fff; font-weight: bold; font-size: 16px; padding: 8px 16px; }
+.warn { color: #c80; }
+.err { color: #c00; }
+.ok { color: #080; }
+pre { background: #f4f4f4; padding: 8px; max-height: 200px; overflow: auto; }
+</style>
+</head>
+<body>
+<h1>Geraete-Test (direkt, am Proxy vorbei)</h1>
+<p>Navigation: <a href="/status.html">Status</a> | <a href="/setup.html">Setup</a> | Test</p>
+<p class="warn">Diese Seite spricht die Geraete DIREKT an (nicht ueber den Proxy).
+Der Proxy kann waehrenddessen im Passthrough weiterlaufen.
+Schreibbefehle gehen NUR an das BLUESUN/UDAN-EMS. Tesvolt und SMA sind read-only.</p>
+
+<div>
+  <button id="emergency">NOT-AUS (BLUESUN Standby + 0 kW)</button>
+  <b id="guard_state"></b>
+</div>
+
+<fieldset>
+<legend><b>1. BLUESUN / UDAN-EMS</b> (IP aus Setup, Unit-ID aus /etc/tesvolt_unit_b, Port 502)</legend>
+<p>Vorzeichen-Konvention: <b>positiv = Entladen</b> (0x1501=2), <b>negativ = Laden</b> (0x1501=1). Aufloesung 0,1 kW. Limit: max. 10 kW (/etc/tesvolt_test_max_kw).</p>
+<label><input type="checkbox" id="bs_confirm"> Ich weiss, dass ich am ECHTEN Geraet schreibe</label><br>
+<button id="bs_status">Status lesen (0x1500-0x1505, read-only)</button>
+<button id="bs_init">Init (0x1503=1, 0x1500=2, 0x1505=1)</button>
+<button id="bs_standby">Standby (0x1501=3, 0x1502=0)</button><br>
+Testleistung (kW, -10..+10): <input id="bs_kw" type="number" step="0.1" min="-10" max="10" value="0">
+<button id="bs_set">Leistung setzen</button>
+<p><small>Failsafe: Nach einem Schreibbefehl sendet die Seite alle 15 s einen Heartbeat.
+Bleibt er 60 s aus (Browser zu, WLAN weg), schreibt der Router automatisch Standby + 0 kW
+(das UDAN-EMS hat KEINEN eigenen Watchdog).</small></p>
+<pre id="bs_out">(noch keine Ausgabe)</pre>
+</fieldset>
+
+<fieldset>
+<legend><b>2. Tesvolt (read-only)</b></legend>
+IP: <input id="tv_ip" type="text" placeholder="aus Setup"> Unit: <input id="tv_unit" type="number" value="1" style="width:50px"><br>
+<button class="tv_preset" data-addr="9">Reg 9 (SOC?)</button>
+<button class="tv_preset" data-addr="10">Reg 10</button>
+<button class="tv_preset" data-addr="11">Reg 11 (Power?)</button>
+<button class="tv_preset" data-addr="12">Reg 12 (Watchdog?)</button>
+<button class="tv_preset" data-addr="13">Reg 13</button>
+Adresse: <input id="tv_addr" type="number" style="width:80px"> FC: <select id="tv_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
+<button id="tv_read">Lesen</button>
+<pre id="tv_out">(noch keine Ausgabe)</pre>
+</fieldset>
+
+<fieldset>
+<legend><b>3. SMA (read-only, generisch)</b></legend>
+IP: <input id="sma_ip" type="text"> Port: <input id="sma_port" type="number" value="502" style="width:60px"> Unit: <input id="sma_unit" type="number" value="3" style="width:50px"><br>
+<button class="sma_preset" data-addr="30775">30775 (Wirkleistung, S32-Hi)</button>
+<button class="sma_preset" data-addr="30776">30776 (S32-Lo)</button>
+<button class="sma_preset" data-addr="30845">30845 (Bat-SOC, S32-Hi)</button>
+Adresse: <input id="sma_addr" type="number" style="width:80px"> FC: <select id="sma_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
+<button id="sma_read">Lesen</button>
+<p><small>Hinweis: mb_cli liest 1 Register (16 Bit). SunSpec-S32-Werte bestehen aus 2 Registern -
+Hi- und Lo-Wort einzeln lesen. Konkretes SMA-Mapping folgt nach Komponentenliste.</small></p>
+<pre id="sma_out">(noch keine Ausgabe)</pre>
+</fieldset>
+
+<script>
+var testActive = false;
+
+function out(id, txt) {
+  var el = document.getElementById(id);
+  el.innerText = new Date().toLocaleTimeString() + "\n" + txt;
+}
+
+function bsCall(params, outId) {
+  return fetch("/cgi-bin/test_bluesun.cgi?" + params)
+    .then(function (r) { return r.text(); })
+    .then(function (t) { out(outId, t); return t; })
+    .catch(function (e) { out(outId, "ERR:fetch " + e); });
+}
+
+function confirmed() {
+  if (!document.getElementById("bs_confirm").checked) {
+    out("bs_out", "Abgebrochen: Bestaetigungs-Checkbox nicht gesetzt.");
+    return false;
+  }
+  return true;
+}
+
+document.getElementById("bs_status").addEventListener("click", function () {
+  bsCall("action=status", "bs_out");
+});
+document.getElementById("bs_init").addEventListener("click", function () {
+  if (!confirmed()) return;
+  testActive = true;
+  bsCall("action=init&confirm=1", "bs_out");
+});
+document.getElementById("bs_set").addEventListener("click", function () {
+  if (!confirmed()) return;
+  var kw = document.getElementById("bs_kw").value;
+  testActive = true;
+  bsCall("action=setpower&confirm=1&kw=" + encodeURIComponent(kw), "bs_out");
+});
+document.getElementById("bs_standby").addEventListener("click", function () {
+  testActive = false;
+  bsCall("action=standby", "bs_out");
+});
+document.getElementById("emergency").addEventListener("click", function () {
+  testActive = false;
+  bsCall("action=standby", "bs_out");
+});
+
+setInterval(function () {
+  if (testActive) {
+    fetch("/cgi-bin/test_bluesun.cgi?action=heartbeat").catch(function () {});
+    document.getElementById("guard_state").innerText = "Testmodus AKTIV - Heartbeat laeuft";
+    document.getElementById("guard_state").className = "warn";
+  } else {
+    document.getElementById("guard_state").innerText = "";
+  }
+}, 15000);
+
+window.addEventListener("beforeunload", function () {
+  if (testActive) navigator.sendBeacon && navigator.sendBeacon("/cgi-bin/test_bluesun.cgi?action=standby");
+});
+
+function genericRead(ip, port, unit, fc, addr, outId) {
+  if (!ip || !addr) { out(outId, "ERR:IP oder Adresse fehlt"); return; }
+  fetch("/cgi-bin/test_read.cgi?ip=" + ip + "&port=" + port + "&unit=" + unit + "&fc=" + fc + "&addr=" + addr)
+    .then(function (r) { return r.text(); })
+    .then(function (t) { out(outId, "Reg " + addr + " -> " + t); })
+    .catch(function (e) { out(outId, "ERR:fetch " + e); });
+}
+
+document.getElementById("tv_read").addEventListener("click", function () {
+  genericRead(document.getElementById("tv_ip").value, 502,
+    document.getElementById("tv_unit").value,
+    document.getElementById("tv_fc").value,
+    document.getElementById("tv_addr").value, "tv_out");
+});
+Array.prototype.forEach.call(document.getElementsByClassName("tv_preset"), function (b) {
+  b.addEventListener("click", function () {
+    document.getElementById("tv_addr").value = b.getAttribute("data-addr");
+    document.getElementById("tv_read").click();
+  });
+});
+
+document.getElementById("sma_read").addEventListener("click", function () {
+  genericRead(document.getElementById("sma_ip").value,
+    document.getElementById("sma_port").value,
+    document.getElementById("sma_unit").value,
+    document.getElementById("sma_fc").value,
+    document.getElementById("sma_addr").value, "sma_out");
+});
+Array.prototype.forEach.call(document.getElementsByClassName("sma_preset"), function (b) {
+  b.addEventListener("click", function () {
+    document.getElementById("sma_addr").value = b.getAttribute("data-addr");
+    document.getElementById("sma_read").click();
+  });
+});
+
+// Tesvolt-IP aus Setup vorbelegen
+fetch("/cgi-bin/get_param.cgi?name=ip_t").then(function (r) { return r.text(); })
+  .then(function (v) { document.getElementById("tv_ip").value = v.trim(); }).catch(function () {});
+</script>
+</body>
+</html>

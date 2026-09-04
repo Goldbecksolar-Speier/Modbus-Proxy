@@ -109,6 +109,7 @@ cp "$SRC/usr/bin/powersplit.lua"    "$BIN/" || fail "copy powersplit.lua"
 cp "$SRC/usr/bin/ems_watchdog.sh"   "$BIN/" || fail "copy ems_watchdog.sh"
 cp "$SRC/usr/bin/mb_cli.lua"        "$BIN/" || fail "copy mb_cli.lua"
 [ -f "$SRC/usr/bin/github_update.sh" ] && cp "$SRC/usr/bin/github_update.sh" "$BIN/"
+[ -f "$SRC/usr/bin/bluesun_test_guard.sh" ] && cp "$SRC/usr/bin/bluesun_test_guard.sh" "$BIN/"
 cp "$SRC/etc/init.d/ems_watchdog"   /etc/init.d/ || fail "copy init.d/ems_watchdog"
 cp "$SRC"/cgi-bin/*.cgi             "$WEB/cgi-bin/" || fail "copy cgi-bin"
 cp "$SRC"/www/*.html                "$WEB/" || fail "copy www"
@@ -127,7 +128,7 @@ done
 # Damit die Setup-UI speichern kann, muessen alle Konfigdateien existieren
 # und dem uhttpd-User gehoeren (Fallback: world-writable).
 for base in ip_t ip_b cap_t cap_b proxy_mode split_mode proxy_registers sim proxy_enabled \
-            grid_max_chg grid_max_dis grid_use_ems; do
+            grid_max_chg grid_max_dis grid_use_ems test_max_kw; do
     f="/etc/tesvolt_$base"
     [ -f "$f" ] || touch "$f"
     if chown uhttpd:uhttpd "$f" 2>/dev/null; then
@@ -141,7 +142,7 @@ log "Konfigdatei-Rechte fuer uhttpd-User gesetzt"
 
 # --- 4. Rechte ---------------------------------------------------------------
 chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua "$BIN"/mb_cli.lua \
-         "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh \
+         "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh "$BIN"/bluesun_test_guard.sh \
          /etc/init.d/ems_watchdog "$WEB"/cgi-bin/*.cgi 2>/dev/null
 
 # --- 5. uhttpd-Instanz fuer die Web-UI (Port 8080) ---------------------------
