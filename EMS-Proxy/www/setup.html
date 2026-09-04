@@ -30,8 +30,9 @@
 </div>
 
 <div>
-  <h3>Power Mode</h3>
-  <label><input type="checkbox" id="mode_split"> Split Mode</label>
+  <h3>Betriebsmodus</h3>
+  <label><input type="checkbox" id="mode_pass"> Passthrough aktiv (Sollwerte der EMS-Quelle werden 1:1 durchgereicht, kein PowerSplit)</label><br>
+  <small>Haken entfernt = Split Mode: der Proxy verteilt die Sollwerte gewichtet auf Tesvolt + BLUESUN.</small>
 </div>
 
 <div>
@@ -113,7 +114,8 @@ function loadConfig() {
   fetch("/cgi-bin/get_mode.cgi")
     .then(function (r) { return r.text(); })
     .then(function (mode) {
-      document.getElementById("mode_split").checked = (mode.trim() === "split");
+      // Haken = Passthrough (alles ausser 'split' gilt als Passthrough)
+      document.getElementById("mode_pass").checked = (mode.trim() !== "split");
     })
     .catch(function () {});
 
@@ -143,7 +145,7 @@ function loadConfig() {
 }
 
 function saveConfig() {
-  var mode  = document.getElementById("mode_split").checked ? "split" : "passthrough";
+  var mode  = document.getElementById("mode_pass").checked ? "passthrough" : "split";
   var split = document.getElementById("split_mode").value;
   var capT  = document.getElementById("cap_t").value;
   var capB  = document.getElementById("cap_b").value;
