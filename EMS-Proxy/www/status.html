@@ -249,7 +249,7 @@ var DM_MAP = [
   { addr: 31395, words: 2, signed: false, name: "Momentane Batterieentladung",                unit: "W" }
 ];
 
-// Tesvolt EMS Marketer-Interface (Direktlesung an ip_t:502) -
+// Tesvolt EMS Marketer-Interface (Direktlesung an ip_ems_t:502, Fallback ip_t) -
 // Registerbelegung laut Marketer-Doku, am Geraet NOCH NICHT VERIFIZIERT.
 var TV_MAP = [
   { addr: 9,     words: 1, signed: false, fc: 3, name: "SOC (Reg 9, unverifiziert)",              unit: "%" },
@@ -461,18 +461,20 @@ function loadEmsSource() {
         dmPanel.style.display = "none";
         tvPanel.style.display = "";
         setPathLabels(false);
-        return fetch("/cgi-bin/get_param.cgi?name=ip_t")
-          .then(function (r) { return r.text(); })
-          .then(function (ip) {
-            tv_cfg.ip = ip.trim();
-            if (!tv_cfg.ip) {
-              document.querySelector("#tv_table tbody").innerHTML =
-                "<tr><td colspan='4' class='not-set'>Tesvolt-IP nicht gesetzt (Setup-Seite)</td></tr>";
-            } else {
-              buildSrcTable("tv_table", TV_MAP);
-              srcReadEntry("tv", TV_MAP, tv_cfg.ip, tv_cfg.unit, 0);
-            }
-          });
+        // Eigene Tesvolt-EMS-IP bevorzugen; Fallback: Batterie-IP (ip_t)
+        return Promise.all([
+          fetch("/cgi-bin/get_param.cgi?name=ip_ems_t").then(function (r) { return r.text(); }),
+          fetch("/cgi-bin/get_param.cgi?name=ip_t").then(function (r) { return r.text(); })
+        ]).then(function (res) {
+          tv_cfg.ip = res[0].trim() || res[1].trim();
+          if (!tv_cfg.ip) {
+            document.querySelector("#tv_table tbody").innerHTML =
+              "<tr><td colspan='4' class='not-set'>Tesvolt-EMS-IP nicht gesetzt (Setup-Seite)</td></tr>";
+          } else {
+            buildSrcTable("tv_table", TV_MAP);
+            srcReadEntry("tv", TV_MAP, tv_cfg.ip, tv_cfg.unit, 0);
+          }
+        });
       }
     })
     .catch(function () {});
