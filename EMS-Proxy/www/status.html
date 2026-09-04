@@ -103,9 +103,10 @@
 <!-- ============ EMS-Quelle: SMA Data Manager (nur sichtbar wenn Quelle=datamanager) ============ -->
 <div class="panel" id="dm_panel" style="display:none; margin-bottom:16px;">
   <h3>EMS-Quelle: SMA Data Manager (Direktlesung, am Proxy vorbei)</h3>
-  <div style="font-size:12px;color:#c80;margin-bottom:6px;">
-    Achtung: SMA-Registeradressen sind Standard-Profilwerte und am Geraet noch UNVERIFIZIERT
-    (geraetespezifische Modbus-Register-HTML des Data Managers pruefen).
+  <div style="font-size:12px;color:#666;margin-bottom:6px;">
+    Registerliste nach EDMx-Modbus-TI-de-16 (Unit-ID 2 = Anlage). Beim EDMM-10.A sind nicht
+    alle Datenpunkte verfuegbar (liefert dann SMA-NaN). EDMM-20: gleiche Standardregister laut
+    SMA-Doku, am Geraet gegen die Modbus-Registerseite des Data Managers gegenpruefen.
   </div>
   <table id="dm_table">
     <thead><tr><th>Reg</th><th>Signal</th><th>Wert</th><th>Status</th></tr></thead>
@@ -221,13 +222,16 @@ var EMS_MAP = [
   { reg: 40004, name: "DischargeLimit_T", src: "Tesvolt DchgLimit",            unit: "" }
 ];
 
-// SMA Data Manager (ennexOS) - Standard-Profilregister, UNVERIFIZIERT!
+// SMA Data Manager (ennexOS) - Register VERIFIZIERT nach EDMx-Modbus-TI-de-16,
+// Kapitel 4.3 "Unit ID = 2 (Anlage)". Alle FC03, RO, FIX0.
 // S32/U32 = 2 Register (Hi+Lo), werden einzeln gelesen und kombiniert.
+// 31393/31395 liefern SMA-NaN, wenn kein Batterie-WR im System ist.
 var DM_MAP = [
-  { addr: 30775, words: 2, signed: true,  name: "AC-Wirkleistung gesamt", unit: "W" },
-  { addr: 30845, words: 2, signed: false, name: "Batterie-SOC",           unit: "%" },
-  { addr: 30865, words: 2, signed: true,  name: "Leistung Netzbezug",     unit: "W" },
-  { addr: 30867, words: 2, signed: true,  name: "Leistung Netzeinspeisung", unit: "W" }
+  { addr: 30775, words: 2, signed: true,  name: "PV-Einspeisewirkleistung alle Aussenleiter", unit: "W" },
+  { addr: 30845, words: 2, signed: false, name: "Batterie-SOC (aktuelle Kapazitaet)",         unit: "%" },
+  { addr: 31249, words: 2, signed: true,  name: "Anlagen-Wirkleistung am PCC (Netz)",         unit: "W" },
+  { addr: 31393, words: 2, signed: false, name: "Momentane Batterieladung",                   unit: "W" },
+  { addr: 31395, words: 2, signed: false, name: "Momentane Batterieentladung",                unit: "W" }
 ];
 
 var SIGNED_REGS = { 30005: true, 30015: true };
@@ -307,7 +311,8 @@ function buildTable() {
 }
 
 // ---------------- SMA Data Manager (Direktlesung) ----------------
-var dm_cfg = { source: "tesvolt", ip: "", unit: 3 };
+// Unit-ID 2 = Anlage (EDMx-Modbus-TI-de-16 Kap. 3.4.1); Unit-ID 1 nur Produktinfo.
+var dm_cfg = { source: "tesvolt", ip: "", unit: 2 };
 
 function buildDmTable() {
   var tbody = document.querySelector("#dm_table tbody");
@@ -346,7 +351,7 @@ function dmReadEntry(idx) {
     if (hi < 0) hi += 65536;   // mb_cli liefert s16
     if (e.words === 1) {
       valEl.innerText = String(e.signed && hi > 32767 ? hi - 65536 : hi);
-      stEl.innerText = "OK (unverifiziert)";
+      stEl.innerText = "OK";
       stEl.className = "hm-ok";
       dmReadEntry(idx + 1);
       return;
@@ -370,7 +375,7 @@ function dmReadEntry(idx) {
         stEl.className = "hm-warn";
       } else {
         valEl.innerText = v + (e.unit ? " " + e.unit : "");
-        stEl.innerText = "OK (unverifiziert)";
+        stEl.innerText = "OK";
         stEl.className = "hm-ok";
       }
       dmReadEntry(idx + 1);
@@ -405,7 +410,7 @@ function loadEmsSource() {
           fetch("/cgi-bin/get_param.cgi?name=unit_dm").then(function (r) { return r.text(); })
         ]).then(function (res) {
           dm_cfg.ip = res[0].trim();
-          dm_cfg.unit = parseInt(res[1].trim(), 10) || 3;
+          dm_cfg.unit = parseInt(res[1].trim(), 10) || 2;
           if (!dm_cfg.ip) {
             document.querySelector("#dm_table tbody").innerHTML =
               "<tr><td colspan='4' class='not-set'>Datamanager-IP nicht gesetzt (Setup-Seite)</td></tr>";

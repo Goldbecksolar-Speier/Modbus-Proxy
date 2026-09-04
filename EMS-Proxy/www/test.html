@@ -65,15 +65,19 @@ Adresse: <input id="tv_addr" type="number" style="width:80px"> FC: <select id="t
 </fieldset>
 
 <fieldset>
-<legend><b>3. SMA (read-only, generisch)</b></legend>
-IP: <input id="sma_ip" type="text"> Port: <input id="sma_port" type="number" value="502" style="width:60px"> Unit: <input id="sma_unit" type="number" value="3" style="width:50px"><br>
-<button class="sma_preset" data-addr="30775">30775 (Wirkleistung, S32-Hi)</button>
+<legend><b>3. SMA Data Manager (read-only)</b></legend>
+IP: <input id="sma_ip" type="text" placeholder="aus Setup (ip_dm)"> Port: <input id="sma_port" type="number" value="502" style="width:60px"> Unit: <input id="sma_unit" type="number" value="2" style="width:50px"><br>
+<button class="sma_preset" data-addr="30775">30775 PV-Leistung (S32-Hi)</button>
 <button class="sma_preset" data-addr="30776">30776 (S32-Lo)</button>
-<button class="sma_preset" data-addr="30845">30845 (Bat-SOC, S32-Hi)</button>
+<button class="sma_preset" data-addr="30845">30845 Bat-SOC (U32-Hi)</button>
+<button class="sma_preset" data-addr="31249">31249 PCC-Leistung (S32-Hi)</button>
+<button class="sma_preset" data-addr="31393">31393 Bat-Ladung (U32-Hi)</button>
+<button class="sma_preset" data-addr="31395">31395 Bat-Entladung (U32-Hi)</button>
 Adresse: <input id="sma_addr" type="number" style="width:80px"> FC: <select id="sma_fc"><option value="3">3 Holding</option><option value="4">4 Input</option></select>
 <button id="sma_read">Lesen</button>
-<p><small>Hinweis: mb_cli liest 1 Register (16 Bit). SunSpec-S32-Werte bestehen aus 2 Registern -
-Hi- und Lo-Wort einzeln lesen. Konkretes SMA-Mapping folgt nach Komponentenliste.</small></p>
+<p><small>Register nach EDMx-Modbus-TI-de-16, Unit-ID 2 = Anlage (Unit-ID 1 = nur Produktinfo).
+mb_cli liest 1 Register (16 Bit); S32/U32-Werte bestehen aus 2 Registern -
+Hi- und Lo-Wort einzeln lesen (Wert = Hi*65536 + Lo). SMA-NaN: S32 = 0x80000000, U32 = 0xFFFFFFFF.</small></p>
 <pre id="sma_out">(noch keine Ausgabe)</pre>
 </fieldset>
 
@@ -175,6 +179,11 @@ Array.prototype.forEach.call(document.getElementsByClassName("sma_preset"), func
 // Tesvolt-IP aus Setup vorbelegen
 fetch("/cgi-bin/get_param.cgi?name=ip_t").then(function (r) { return r.text(); })
   .then(function (v) { document.getElementById("tv_ip").value = v.trim(); }).catch(function () {});
+// SMA-Datamanager-IP und Unit-ID aus Setup vorbelegen
+fetch("/cgi-bin/get_param.cgi?name=ip_dm").then(function (r) { return r.text(); })
+  .then(function (v) { if (v.trim()) document.getElementById("sma_ip").value = v.trim(); }).catch(function () {});
+fetch("/cgi-bin/get_param.cgi?name=unit_dm").then(function (r) { return r.text(); })
+  .then(function (v) { if (v.trim()) document.getElementById("sma_unit").value = v.trim(); }).catch(function () {});
 </script>
 </body>
 </html>

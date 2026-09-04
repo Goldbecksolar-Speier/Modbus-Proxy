@@ -68,7 +68,8 @@
   Tesvolt IP: <input id="ip_tesvolt" type="text"><br>
   BLUESUN IP: <input id="ip_bluesun" type="text"><br>
   SMA Datamanager IP (EMS): <input id="ip_dm" type="text">
-  Unit-ID: <input id="unit_dm" type="number" value="3" style="width:50px"><br>
+  Unit-ID: <input id="unit_dm" type="number" value="2" style="width:50px">
+  <small>Unit-ID 2 = Anlage, 1 = nur Produktinfo (EDMx-Modbus-TI-de-16)</small><br>
   SMA Wechselrichter IP (Tesvolt-Batterie): <input id="ip_sma" type="text"><br>
 </div>
 
@@ -130,8 +131,8 @@ function loadConfig() {
         if (name === "ip_b") document.getElementById("ip_bluesun").value = v;
         if (name === "ip_dm") document.getElementById("ip_dm").value = v;
         if (name === "ip_sma") document.getElementById("ip_sma").value = v;
-        if (name === "ems_source") document.getElementById("ems_source").value = v;
-        if (name === "unit_dm") document.getElementById("unit_dm").value = v;
+        if (name === "ems_source" && v) document.getElementById("ems_source").value = v;
+        if (name === "unit_dm" && v) document.getElementById("unit_dm").value = v;
         if (name === "sim") document.getElementById("sim_mode").checked = (v === "1");
         if (name === "grid_max_chg") { document.getElementById("grid_chg").value = v; updateGridHint(); }
         if (name === "grid_max_dis") { document.getElementById("grid_dis").value = v; updateGridHint(); }
@@ -158,20 +159,31 @@ function saveConfig() {
   var gEms  = document.getElementById("grid_use_ems").checked ? "1" : "0";
 
   Promise.all([
-    fetch("/cgi-bin/set_mode.cgi?mode=" + mode),
-    fetch("/cgi-bin/set_split.cgi?split=" + split),
-    fetch("/cgi-bin/set_params.cgi?cap_t=" + capT + "&cap_b=" + capB),
-    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB),
-    fetch("/cgi-bin/set_ems.cgi?source=" + src + "&ip_dm=" + ipDm + "&ip_sma=" + ipSma + "&unit_dm=" + uDm),
-    fetch("/cgi-bin/set_sim.cgi?sim=" + sim),
-    fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms)
+    fetch("/cgi-bin/set_mode.cgi?mode=" + mode).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_split.cgi?split=" + split).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_params.cgi?cap_t=" + capT + "&cap_b=" + capB).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_ems.cgi?source=" + src + "&ip_dm=" + ipDm + "&ip_sma=" + ipSma + "&unit_dm=" + uDm).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_sim.cgi?sim=" + sim).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms).then(function (r) { return r.text(); })
   ])
-    .then(function () {
-      document.getElementById("save_status").innerText = "Gespeichert.";
+    .then(function (results) {
+      // CGIs melden Schreibfehler als "FEHLER:..." - nicht als HTTP-Fehler!
+      var errs = results.filter(function (t) { return t.indexOf("FEHLER") >= 0; });
+      var el = document.getElementById("save_status");
+      if (errs.length > 0) {
+        el.innerText = "FEHLER beim Speichern: " + errs.join(" | ");
+        el.style.color = "#c00";
+      } else {
+        el.innerText = "Gespeichert.";
+        el.style.color = "#080";
+      }
       updateGridHint();
     })
     .catch(function () {
-      document.getElementById("save_status").innerText = "Fehler beim Speichern!";
+      var el = document.getElementById("save_status");
+      el.innerText = "Fehler beim Speichern (HTTP)!";
+      el.style.color = "#c00";
     });
 }
 
