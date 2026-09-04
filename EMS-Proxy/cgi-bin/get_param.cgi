@@ -10,6 +10,10 @@ case "$NAME" in
     ip_b)         cat /etc/tesvolt_ip_b 2>/dev/null || echo "" ;;
     ip_dm)        cat /etc/tesvolt_ip_dm 2>/dev/null || echo "" ;;
     ip_sma)       cat /etc/tesvolt_ip_sma 2>/dev/null || echo "" ;;
+    ip_ems_t)     cat /etc/tesvolt_ip_ems_t 2>/dev/null || echo "" ;;
+    en_t)         cat /etc/tesvolt_en_t 2>/dev/null || echo 1 ;;
+    en_b)         cat /etc/tesvolt_en_b 2>/dev/null || echo 1 ;;
+    en_sma)       cat /etc/tesvolt_en_sma 2>/dev/null || echo 1 ;;
     ems_source)   cat /etc/tesvolt_ems_source 2>/dev/null || echo tesvolt ;;
     unit_dm)      cat /etc/tesvolt_unit_dm 2>/dev/null || echo 3 ;;
     sim)          cat /etc/tesvolt_sim 2>/dev/null || echo 0 ;;

@@ -9,6 +9,9 @@
            text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; }
   .nav a:hover { background: #2e7dd1; }
   .nav a.active { background: #2e7dd1; }
+  .dev-row { margin: 4px 0; }
+  .dev-row input[type=text] { width: 160px; }
+  .dev-off { color: #999; }
 </style>
 </head>
 <body>
@@ -36,12 +39,30 @@
 </div>
 
 <div>
-  <h3>EMS-Quelle</h3>
+  <h3>EMS-Quelle (steuerndes System)</h3>
   <select id="ems_source">
     <option value="tesvolt">Tesvolt EMS (direkt)</option>
     <option value="datamanager">SMA Data Manager (ennexOS)</option>
   </select>
-  <small>Bestimmt, welche Quellregister auf der Status-Seite angezeigt werden.</small>
+  <small>Bestimmt, welche Quellregister auf der Status-Seite angezeigt werden.</small><br><br>
+  <div class="dev-row">Tesvolt EMS IP: <input id="ip_ems_t" type="text">
+    <small>(Marketer-Interface; leer = Tesvolt-Batterie-IP wird verwendet)</small></div>
+  <div class="dev-row">SMA Datamanager IP (EMS): <input id="ip_dm" type="text">
+    Unit-ID: <input id="unit_dm" type="number" value="2" style="width:50px">
+    <small>Unit-ID 2 = Anlage, 1 = nur Produktinfo (EDMx-Modbus-TI-de-16)</small></div>
+</div>
+
+<div>
+  <h3>Geraete (Batterien / Wechselrichter - Ziele des Proxys)</h3>
+  <div class="dev-row"><label><input type="checkbox" id="en_t"> Modbus/TCP</label>
+    Tesvolt Batterie/PCS IP: <input id="ip_tesvolt" type="text"></div>
+  <div class="dev-row"><label><input type="checkbox" id="en_b"> Modbus/TCP</label>
+    BLUESUN Batterie IP: <input id="ip_bluesun" type="text"></div>
+  <div class="dev-row"><label><input type="checkbox" id="en_sma"> Modbus/TCP</label>
+    SMA Wechselrichter IP (Tesvolt-Batterie): <input id="ip_sma" type="text"></div>
+  <small>Haken = Geraet ist per Modbus/TCP erreichbar und wird beruecksichtigt.
+  Haken entfernen, wenn das Geraet kein Modbus/TCP bietet (z.B. CAN-Bus-Anbindung) -
+  es wird dann nicht direkt angesprochen.</small>
 </div>
 
 <div>
@@ -62,16 +83,6 @@
   <label><input type="checkbox" id="grid_use_ems"> Limit zusaetzlich aus Tesvolt-EMS-Registern 40003/40004 beziehen (wirksam = Minimum beider Quellen)</label><br>
   <small>Wird nur im Split Mode durchgesetzt. Im Passthrough greift der Proxy nicht in die Tesvolt-Steuerung ein.</small><br>
   <b id="grid_hint" style="color:#c80"></b>
-</div>
-
-<div>
-  <h3>Modbus / IP</h3>
-  Tesvolt IP: <input id="ip_tesvolt" type="text"><br>
-  BLUESUN IP: <input id="ip_bluesun" type="text"><br>
-  SMA Datamanager IP (EMS): <input id="ip_dm" type="text">
-  Unit-ID: <input id="unit_dm" type="number" value="2" style="width:50px">
-  <small>Unit-ID 2 = Anlage, 1 = nur Produktinfo (EDMx-Modbus-TI-de-16)</small><br>
-  SMA Wechselrichter IP (Tesvolt-Batterie): <input id="ip_sma" type="text"><br>
 </div>
 
 <div>
@@ -110,6 +121,16 @@ function updateGridHint() {
   }
 }
 
+// Deaktivierte Geraete: IP-Feld ausgrauen
+function updateDevRows() {
+  [["en_t", "ip_tesvolt"], ["en_b", "ip_bluesun"], ["en_sma", "ip_sma"]].forEach(function (p) {
+    var on = document.getElementById(p[0]).checked;
+    var ip = document.getElementById(p[1]);
+    ip.disabled = !on;
+    ip.parentElement.className = on ? "dev-row" : "dev-row dev-off";
+  });
+}
+
 function loadConfig() {
   fetch("/cgi-bin/get_mode.cgi")
     .then(function (r) { return r.text(); })
@@ -120,7 +141,8 @@ function loadConfig() {
     .catch(function () {});
 
   ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b", "sim",
-   "ip_dm", "ip_sma", "ems_source", "unit_dm",
+   "ip_dm", "ip_sma", "ip_ems_t", "ems_source", "unit_dm",
+   "en_t", "en_b", "en_sma",
    "grid_max_chg", "grid_max_dis", "grid_use_ems"].forEach(function (name) {
     fetch("/cgi-bin/get_param.cgi?name=" + name)
       .then(function (r) { return r.text(); })
@@ -133,9 +155,14 @@ function loadConfig() {
         if (name === "ip_b") document.getElementById("ip_bluesun").value = v;
         if (name === "ip_dm") document.getElementById("ip_dm").value = v;
         if (name === "ip_sma") document.getElementById("ip_sma").value = v;
+        if (name === "ip_ems_t") document.getElementById("ip_ems_t").value = v;
         if (name === "ems_source" && v) document.getElementById("ems_source").value = v;
         if (name === "unit_dm" && v) document.getElementById("unit_dm").value = v;
         if (name === "sim") document.getElementById("sim_mode").checked = (v === "1");
+        // Geraete-Haken: Default = aktiv (nur explizites 0 deaktiviert)
+        if (name === "en_t")   { document.getElementById("en_t").checked   = (v !== "0"); updateDevRows(); }
+        if (name === "en_b")   { document.getElementById("en_b").checked   = (v !== "0"); updateDevRows(); }
+        if (name === "en_sma") { document.getElementById("en_sma").checked = (v !== "0"); updateDevRows(); }
         if (name === "grid_max_chg") { document.getElementById("grid_chg").value = v; updateGridHint(); }
         if (name === "grid_max_dis") { document.getElementById("grid_dis").value = v; updateGridHint(); }
         if (name === "grid_use_ems") document.getElementById("grid_use_ems").checked = (v === "1");
@@ -153,9 +180,13 @@ function saveConfig() {
   var ipB   = document.getElementById("ip_bluesun").value;
   var ipDm  = document.getElementById("ip_dm").value;
   var ipSma = document.getElementById("ip_sma").value;
+  var ipEmsT = document.getElementById("ip_ems_t").value;
   var src   = document.getElementById("ems_source").value;
   var uDm   = document.getElementById("unit_dm").value;
   var sim   = document.getElementById("sim_mode").checked ? "1" : "0";
+  var enT   = document.getElementById("en_t").checked ? "1" : "0";
+  var enB   = document.getElementById("en_b").checked ? "1" : "0";
+  var enSma = document.getElementById("en_sma").checked ? "1" : "0";
   var gChg  = document.getElementById("grid_chg").value;
   var gDis  = document.getElementById("grid_dis").value;
   var gEms  = document.getElementById("grid_use_ems").checked ? "1" : "0";
@@ -164,8 +195,10 @@ function saveConfig() {
     fetch("/cgi-bin/set_mode.cgi?mode=" + mode).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_split.cgi?split=" + split).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_params.cgi?cap_t=" + capT + "&cap_b=" + capB).then(function (r) { return r.text(); }),
-    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB).then(function (r) { return r.text(); }),
-    fetch("/cgi-bin/set_ems.cgi?source=" + src + "&ip_dm=" + ipDm + "&ip_sma=" + ipSma + "&unit_dm=" + uDm).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB +
+          "&en_t=" + enT + "&en_b=" + enB + "&en_sma=" + enSma).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_ems.cgi?source=" + src + "&ip_dm=" + ipDm + "&ip_sma=" + ipSma +
+          "&unit_dm=" + uDm + "&ip_ems_t=" + ipEmsT).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_sim.cgi?sim=" + sim).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms).then(function (r) { return r.text(); })
   ])
@@ -192,6 +225,9 @@ function saveConfig() {
 document.getElementById("save_btn").addEventListener("click", saveConfig);
 document.getElementById("grid_chg").addEventListener("input", updateGridHint);
 document.getElementById("grid_dis").addEventListener("input", updateGridHint);
+["en_t", "en_b", "en_sma"].forEach(function (id) {
+  document.getElementById(id).addEventListener("change", updateDevRows);
+});
 document.getElementById("start_btn").addEventListener("click", function () {
   fetch("/cgi-bin/proxy_ctl.cgi?action=start").then(refreshStatus);
 });
