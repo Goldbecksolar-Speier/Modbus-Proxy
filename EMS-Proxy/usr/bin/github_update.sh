@@ -128,7 +128,8 @@ done
 # Damit die Setup-UI speichern kann, muessen alle Konfigdateien existieren
 # und dem uhttpd-User gehoeren (Fallback: world-writable).
 for base in ip_t ip_b cap_t cap_b proxy_mode split_mode proxy_registers sim proxy_enabled \
-            grid_max_chg grid_max_dis grid_use_ems test_max_kw; do
+            grid_max_chg grid_max_dis grid_use_ems test_max_kw \
+            ems_source ip_dm unit_dm ip_sma; do
     f="/etc/tesvolt_$base"
     [ -f "$f" ] || touch "$f"
     if chown uhttpd:uhttpd "$f" 2>/dev/null; then
