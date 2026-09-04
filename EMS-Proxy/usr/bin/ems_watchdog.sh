@@ -6,7 +6,9 @@
 #    0 = Proxy stoppen und gestoppt lassen, sonst = laufen lassen.
 #    (CGIs laufen als User uhttpd und duerfen den root-Proxy nicht
 #    killen - deshalb setzt der Watchdog (root) den Wunsch um.)
-#  * Failsafe: nach 3 BLUESUN-Fehlern -> passthrough + SetPower_B=0
+#  * Failsafe: nach 3 BLUESUN-Fehlern -> passthrough + BLUESUN Standby
+#    (UDAN-EMS Steuerblock 0x1501=3 / 0x1502=0; Herstellerfreigabe
+#    2026-09-04 - das UDAN-EMS hat KEINEN eigenen Watchdog!)
 #  * repariert fehlende Konfigdateien
 #  * einfache Logrotation (max. 500 kB)
 #  * kill per PID statt killall (sauberer auf BusyBox)
@@ -14,6 +16,7 @@
 #    entsprechenden Checks uebersprungen (Proxy ist dann im Schutzmodus)
 #  * Modbus-Zugriffe via mb_cli.lua (luasocket) - modbus_cli existiert
 #    auf RUTOS NICHT!
+#  * BLUESUN Unit-ID aus /etc/tesvolt_unit_b (Default 10 lt. Hersteller)
 #  * WICHTIG: EXC:<n> heisst der Proxy LEBT (Modbus-Exception ist eine
 #    gueltige Antwort, z.B. Ziel-Batterie nicht erreichbar). Nur bei
 #    ERR:* (connect refused / timeout) wird der Proxy neu gestartet.
@@ -38,6 +41,12 @@ rotate_log() {
     fi
 }
 
+bs_unit() {
+    U=$(cat /etc/tesvolt_unit_b 2>/dev/null)
+    [ -z "$U" ] && U=10
+    echo "$U"
+}
+
 kill_proxy() {
     PIDS=$(pgrep -f "modbus_proxy.lua")
     for P in $PIDS; do
@@ -56,11 +65,16 @@ restart_proxy() {
 failsafe() {
     BLUESUN_IP=$(cat /etc/tesvolt_ip_b 2>/dev/null)
     [ -z "$BLUESUN_IP" ] && return
-    logmsg "FAILSAFE: $1 -> passthrough + SetPower_B=0"
+    BS_UNIT=$(bs_unit)
+    logmsg "FAILSAFE: $1 -> passthrough + BLUESUN Standby (0x1501=3, 0x1502=0)"
     echo "passthrough" > /etc/tesvolt_proxy_mode
-    # SetPower_B=0 (Register 0x1144 = 4420; ACHTUNG: Schreibpfad UDAN-EMS
-    # 0x1500/0x1530 noch in Herstellerklaerung - Register ggf. anpassen)
-    lua "$MB" write "$BLUESUN_IP" 502 1 4420 0 >/dev/null 2>&1
+    # UDAN-EMS Steuerblock (Herstellerfreigabe 2026-09-04, Variante A):
+    # 0x1501 (5377) SystemState  = 3 (Standby)
+    # 0x1502 (5378) ExpectedPower = 0 (0.1 kW-Skala)
+    # Herstellervorgabe: min. 200 ms Abstand zwischen Requests -> sleep 1
+    lua "$MB" write "$BLUESUN_IP" 502 "$BS_UNIT" 5377 3 >/dev/null 2>&1
+    sleep 1
+    lua "$MB" write "$BLUESUN_IP" 502 "$BS_UNIT" 5378 0 >/dev/null 2>&1
 }
 
 logmsg "Watchdog gestartet"
@@ -108,12 +122,13 @@ while true; do
         *)     restart_proxy "Proxy antwortet nicht auf Port 1502 ($R)" ;;
     esac
 
-    # 3) BLUESUN PCS-Link: SOC (0x1140 = 4416, FC04) - nur im Split-Modus
-    #    und NICHT im Simulationsmodus (keine echten Geraete!)
+    # 3) BLUESUN PCS-Link: System-SOC (0x1140 = 4416, FC04) - nur im
+    #    Split-Modus und NICHT im Simulationsmodus (keine echten Geraete!)
     MODE=$(cat /etc/tesvolt_proxy_mode 2>/dev/null)
     SIM=$(cat /etc/tesvolt_sim 2>/dev/null)
     if [ "$MODE" = "split" ] && [ -n "$BLUESUN_IP" ] && [ "$SIM" != "1" ]; then
-        SOC_B=$(lua "$MB" read "$BLUESUN_IP" 502 1 4 4416 2>/dev/null)
+        BS_UNIT=$(bs_unit)
+        SOC_B=$(lua "$MB" read "$BLUESUN_IP" 502 "$BS_UNIT" 4 4416 2>/dev/null)
         case "$SOC_B" in
             OK:*|EXC:*) BS_FAIL=0 ;;
             *)

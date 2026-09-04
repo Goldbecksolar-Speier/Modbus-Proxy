@@ -8,8 +8,15 @@
 -- Modi:
 --   passthrough : alle Anfragen 1:1 an die Tesvolt-Batterie
 --   split       : SetPower wird via powersplit.lua auf beide Batterien
---                 verteilt; BLUESUN erhaelt SetPower_B (0x1144, x100)
---                 und Mode (0x1143)
+--                 verteilt; BLUESUN erhaelt den Sollwert ueber den
+--                 UDAN-EMS Steuerblock 0x1500 (Herstellerfreigabe
+--                 2026-09-04, Variante A):
+--                   0x1500 ControlMode  = 2 (manuell)
+--                   0x1501 SystemState  = 1 Laden / 2 Entladen / 3 Standby
+--                   0x1502 ExpectedPower = Betrag in 0.1 kW (u16)
+--                   0x1503 ControlPriority = 1 (lokal)
+--                   0x1505 PCS Start/Stop  = 1 Start / 2 Stop
+--                 Herstellervorgabe: min. 200 ms zwischen Requests.
 --
 -- Netzanschluss-Limit (nur Split-Modus!):
 --   * /etc/tesvolt_grid_max_chg / _dis (kW, Setup-UI) = harte Obergrenze
@@ -35,11 +42,16 @@
 -- Konfiguration:
 --   * KEINE fest kodierten IPs. IPs kommen ausschliesslich aus
 --     /etc/tesvolt_ip_t und /etc/tesvolt_ip_b (Setup-UI: setup.html).
+--   * BLUESUN Unit-ID: /etc/tesvolt_unit_b (Default 10 lt. Hersteller).
 --   * Solange keine IPs konfiguriert sind, antwortet der Proxy mit
 --     Modbus-Exception 0x0A (Gateway Path Unavailable) und loggt dies.
 --
--- Failsafe:
---   * BLUESUN 3x nicht erreichbar -> automatisch passthrough + SetPower_B=0
+-- Failsafe (WICHTIG: das UDAN-EMS hat KEINEN eigenen Watchdog!
+-- Herstellerantwort 2026-09-04: 'No timeout setting' - ein einmal
+-- geschriebener Sollwert bleibt dauerhaft aktiv):
+--   * BLUESUN 3x nicht erreichbar -> automatisch passthrough +
+--     BLUESUN Standby (0x1501=3, 0x1502=0)
+--   * Kein EMS-Sollwert seit > ems_timeout_s -> BLUESUN Standby
 --   * Fehler werden nach /var/log/ems_proxy.log geschrieben
 -- =====================================================================
 
@@ -52,20 +64,29 @@ local CFG = {
   tesvolt_ip  = nil,    -- NUR aus /etc/tesvolt_ip_t (kein Fallback!)
   bluesun_ip  = nil,    -- NUR aus /etc/tesvolt_ip_b (kein Fallback!)
   modbus_port = 502,
-  unit_id     = 1,
+  unit_id     = 1,      -- Unit-ID Tesvolt-Seite
+  bluesun_unit = 10,    -- Unit-ID UDAN-EMS (Default lt. Hersteller;
+                        -- Override: /etc/tesvolt_unit_b)
   timeout_s   = 2,
+  bs_gap_s    = 0.2,    -- Herstellervorgabe: min. 200 ms zwischen
+                        -- Requests an das UDAN-EMS
+  keepalive_s = 5,      -- unveraenderten Sollwert spaetestens alle 5 s
+                        -- erneut schreiben
+  ems_timeout_s = 10,   -- kein EMS-Sollwert > 10 s -> BLUESUN Standby
   logfile     = "/var/log/ems_proxy.log",
 }
 
--- BLUESUN-Registerkonstanten (siehe 0-EMS/HMI Modbus485 v1.18)
--- ACHTUNG: Schreibpfad UDAN-EMS (0x1500ff vs 0x1530) noch in
--- Herstellerklaerung - 0x1144 ist READ-ONLY und als Schreibziel FALSCH!
+-- BLUESUN/UDAN-EMS Registerkonstanten (EMS/HMI Modbus485 v1.18;
+-- Schreibpfad per Herstellerfreigabe 2026-09-04 = Steuerblock 0x1500)
 local BS = {
-  SOC      = 0x1140,  -- SOC_B
-  SETPOWER = 0x1144,  -- SetPower_B, Skalierung x100
-  MODE     = 0x1143,  -- Betriebsmodus
-  CHG_LIM  = 0x361D,  -- ChargeLimit_B, x100
-  DIS_LIM  = 0x361F,  -- DischargeLimit_B, x100
+  SOC        = 0x1140,  -- System-SOC (FC04, read-only)
+  CTRL_MODE  = 0x1500,  -- ControlMode: 1=Automatik, 2=manuell
+  CTRL_STATE = 0x1501,  -- SystemState: 1=Laden, 2=Entladen, 3=Standby
+  CTRL_POWER = 0x1502,  -- ExpectedPower: Betrag in 0.1 kW (u16)
+  CTRL_PRIO  = 0x1503,  -- ControlPriority: 1=lokal, 2=remote
+  PCS_ONOFF  = 0x1505,  -- PCS Start/Stop: 1=Start, 2=Stop
+  CHG_LIM    = 0x361D,  -- ChargeLimit_B, x100
+  DIS_LIM    = 0x361F,  -- DischargeLimit_B, x100
 }
 
 -- EMS-Registeradressen (Proxy-Sicht, siehe docs/Register-Mapping)
@@ -107,6 +128,7 @@ end
 local function load_ips()
   CFG.tesvolt_ip = read_file("/etc/tesvolt_ip_t", nil)
   CFG.bluesun_ip = read_file("/etc/tesvolt_ip_b", nil)
+  CFG.bluesun_unit = tonumber(read_file("/etc/tesvolt_unit_b", "10")) or 10
 end
 
 local function is_configured()
@@ -125,8 +147,9 @@ local function next_tid()
 end
 
 -- Sendet einen Modbus-TCP-Request und liefert die Antwort-PDU
-local function mb_request(ip, pdu)
+local function mb_request(ip, pdu, unit)
   if ip == nil then return nil, "IP nicht konfiguriert" end
+  unit = unit or CFG.unit_id
   local c = socket.tcp()
   c:settimeout(CFG.timeout_s)
   local ok, err = c:connect(ip, CFG.modbus_port)
@@ -137,7 +160,7 @@ local function mb_request(ip, pdu)
     b_hi(tid), b_lo(tid),           -- Transaction ID
     0, 0,                           -- Protocol ID
     b_hi(#pdu + 1), b_lo(#pdu + 1), -- Length
-    CFG.unit_id)                    -- Unit ID
+    unit)                           -- Unit ID
   c:send(mbap .. pdu)
 
   local hdr = c:receive(7)
@@ -150,24 +173,112 @@ local function mb_request(ip, pdu)
 end
 
 -- FC03/FC04: Register lesen -> Zahlenwert (erstes Register)
-local function mb_read(ip, fc, addr, count)
+local function mb_read(ip, fc, addr, count, unit)
   count = count or 1
   local pdu = string.char(fc, b_hi(addr), b_lo(addr), b_hi(count), b_lo(count))
-  local resp, err = mb_request(ip, pdu)
+  local resp, err = mb_request(ip, pdu, unit)
   if not resp then return nil, err end
   if resp:byte(1) ~= fc then return nil, "exception " .. tostring(resp:byte(2)) end
   return u16(resp:byte(3), resp:byte(4))
 end
 
 -- FC06: Einzelregister schreiben
-local function mb_write(ip, addr, value)
+local function mb_write(ip, addr, value, unit)
   if ip == nil then return nil, "IP nicht konfiguriert" end
   if value < 0 then value = value + 65536 end -- 16-Bit-Zweierkomplement
   local pdu = string.char(6, b_hi(addr), b_lo(addr), b_hi(value), b_lo(value))
-  local resp, err = mb_request(ip, pdu)
+  local resp, err = mb_request(ip, pdu, unit)
   if not resp then return nil, err end
   if resp:byte(1) ~= 6 then return nil, "exception " .. tostring(resp:byte(2)) end
   return true
+end
+
+-- ------------------- BLUESUN/UDAN-EMS Zugriff -----------------------
+-- Alle Zugriffe laufen ueber bs_read/bs_write: erzwingt die
+-- Herstellervorgabe von min. 200 ms Abstand zwischen Requests und
+-- nutzt die richtige Unit-ID (Default 10).
+local last_bs_t = 0
+local function bs_throttle()
+  local now = socket.gettime()
+  local wait = CFG.bs_gap_s - (now - last_bs_t)
+  if wait > 0 then socket.sleep(wait) end
+  last_bs_t = socket.gettime()
+end
+
+local function bs_read(fc, addr)
+  bs_throttle()
+  return mb_read(CFG.bluesun_ip, fc, addr, 1, CFG.bluesun_unit)
+end
+
+local function bs_write(addr, value)
+  bs_throttle()
+  return mb_write(CFG.bluesun_ip, addr, value, CFG.bluesun_unit)
+end
+
+-- Init-Sequenz (einmalig beim Aktivieren der Regelung):
+-- 0x1503=1 (lokal: EMS ignoriert Cloud-Plattform) ->
+-- 0x1500=2 (manueller Modus) -> 0x1505=1 (PCS starten)
+local bs_initialized = false
+local function bluesun_init()
+  if bs_initialized then return true end
+  local ok1, e1 = bs_write(BS.CTRL_PRIO, 1)
+  local ok2, e2 = bs_write(BS.CTRL_MODE, 2)
+  local ok3, e3 = bs_write(BS.PCS_ONOFF, 1)
+  if ok1 and ok2 and ok3 then
+    bs_initialized = true
+    log("BLUESUN init OK: Prio=lokal, Mode=manuell, PCS=Start")
+    return true
+  end
+  log("BLUESUN init FEHLER: prio=" .. tostring(e1) ..
+      " mode=" .. tostring(e2) .. " pcs=" .. tostring(e3))
+  return false
+end
+
+-- Sollwert schreiben. p_w in W, Vorzeichen wie P_req
+-- (>0 = Entladen, <0 = Laden). Kodierung UDAN-EMS:
+-- Richtung ueber 0x1501, Betrag in 0.1 kW ueber 0x1502.
+-- Unveraenderte Werte werden nur alle keepalive_s erneut geschrieben
+-- (Registerschonung), Aenderungen sofort.
+local last_bs_state, last_bs_deci = nil, nil
+local last_bs_write_t = 0
+local function write_bluesun_setpoint(p_w)
+  local deci = math.floor(math.abs(p_w) / 100 + 0.5)  -- W -> 0.1 kW
+  local state
+  if deci == 0 then
+    state = 3            -- Standby
+  elseif p_w > 0 then
+    state = 2            -- Entladen
+  else
+    state = 1            -- Laden
+  end
+
+  local now = socket.gettime()
+  if state == last_bs_state and deci == last_bs_deci
+     and (now - last_bs_write_t) < CFG.keepalive_s then
+    return true -- unveraendert, Keepalive noch nicht faellig
+  end
+
+  if not bluesun_init() then return nil, "init fehlgeschlagen" end
+
+  local ok1, e1 = bs_write(BS.CTRL_STATE, state)
+  local ok2, e2 = bs_write(BS.CTRL_POWER, deci)
+  if ok1 and ok2 then
+    last_bs_state, last_bs_deci = state, deci
+    last_bs_write_t = socket.gettime()
+    return true
+  end
+  bs_initialized = false -- Init beim naechsten Versuch wiederholen
+  return nil, "state=" .. tostring(e1) .. " power=" .. tostring(e2)
+end
+
+-- Sicherer Zustand: Standby + 0 kW (das UDAN-EMS hat KEINEN eigenen
+-- Watchdog - ohne diesen Aufruf bleibt der letzte Sollwert dauerhaft aktiv!)
+local function bluesun_safe_state(reason)
+  log("BLUESUN SAFE-STATE (" .. reason .. "): Standby + 0 kW")
+  bs_write(BS.CTRL_STATE, 3)
+  bs_write(BS.CTRL_POWER, 0)
+  last_bs_state, last_bs_deci = 3, 0
+  last_bs_write_t = socket.gettime()
 end
 
 -- ------------------------- Netzanschluss-Limit ----------------------
@@ -248,9 +359,13 @@ end
 local bluesun_fail_count = 0
 local BLUESUN_FAIL_LIMIT = 3
 
+-- Zeitstempel des letzten gueltigen EMS-Sollwerts (Failsafe-Basis)
+local last_ems_setpoint_t = socket.gettime()
+local ems_stale = false
+
 local function read_limits()
-  local chg_b = mb_read(CFG.bluesun_ip, 3, BS.CHG_LIM)
-  local dis_b = mb_read(CFG.bluesun_ip, 3, BS.DIS_LIM)
+  local chg_b = bs_read(3, BS.CHG_LIM)
+  local dis_b = bs_read(3, BS.DIS_LIM)
   return {
     chg_b = chg_b and chg_b * 100 or nil,
     dis_b = dis_b and dis_b * 100 or nil,
@@ -260,14 +375,17 @@ local function read_limits()
 end
 
 local function failsafe_passthrough(reason)
-  log("FAILSAFE: " .. reason .. " -> passthrough, SetPower_B=0")
+  log("FAILSAFE: " .. reason .. " -> passthrough + BLUESUN Standby")
   local f = io.open("/etc/tesvolt_proxy_mode", "w")
   if f then f:write("passthrough\n"); f:close() end
-  mb_write(CFG.bluesun_ip, BS.SETPOWER, 0)
+  bluesun_safe_state(reason)
 end
 
 -- Verarbeitet einen Schreibbefehl des EMS auf das SetPower-Register
 local function handle_setpower(p_req)
+  last_ems_setpoint_t = socket.gettime()
+  ems_stale = false
+
   local mode = get_mode()
   if mode ~= "split" or CFG.bluesun_ip == nil then
     if mode == "split" and CFG.bluesun_ip == nil then
@@ -278,7 +396,7 @@ local function handle_setpower(p_req)
   end
 
   local soc_t = mb_read(CFG.tesvolt_ip, 4, EMS.SOC) or 0
-  local soc_b = mb_read(CFG.bluesun_ip, 3, BS.SOC)
+  local soc_b = bs_read(4, BS.SOC)
 
   if soc_b == nil then
     bluesun_fail_count = bluesun_fail_count + 1
@@ -305,8 +423,7 @@ local function handle_setpower(p_req)
   end
 
   local ok1, e1 = mb_write(CFG.tesvolt_ip, EMS.SETPOWER, math.floor(p_t))
-  local ok2, e2 = mb_write(CFG.bluesun_ip, BS.SETPOWER, math.floor(p_b / 100))
-  mb_write(CFG.bluesun_ip, BS.MODE, 1)
+  local ok2, e2 = write_bluesun_setpoint(math.floor(p_b))
 
   log(string.format("SPLIT req=%dW -> T=%dW B=%dW (soc_t=%d soc_b=%d)",
       p_req, p_t, p_b, soc_t, soc_b))
@@ -327,6 +444,7 @@ local function serve()
   log("EMS-Proxy gestartet auf Port " .. CFG.listen_port ..
       " (Tesvolt=" .. tostring(CFG.tesvolt_ip) ..
       ", BLUESUN=" .. tostring(CFG.bluesun_ip) ..
+      ", BS-Unit=" .. tostring(CFG.bluesun_unit) ..
       (get_sim() and ", SIMULATION AKTIV" or "") .. ")")
   if not get_sim() and not is_configured() then
     log("WARNUNG: IPs nicht konfiguriert - bitte Setup aufrufen (setup.html). " ..
@@ -385,6 +503,17 @@ local function serve()
         end
       end
       client:close()
+    else
+      -- Keine EMS-Anfrage in diesem Zyklus: Failsafe pruefen.
+      -- Das UDAN-EMS hat KEINEN eigenen Watchdog - ohne diese Sicherung
+      -- wuerde der letzte Sollwert bei EMS-Ausfall dauerhaft weiterlaufen!
+      if not get_sim() and get_mode() == "split"
+         and CFG.bluesun_ip ~= nil and bs_initialized and not ems_stale
+         and (socket.gettime() - last_ems_setpoint_t) > CFG.ems_timeout_s then
+        bluesun_safe_state("kein EMS-Sollwert seit " ..
+                           CFG.ems_timeout_s .. " s")
+        ems_stale = true
+      end
     end
   end
 end
