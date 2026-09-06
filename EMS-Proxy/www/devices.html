@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>EMS Proxy Geraete-Slots</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
+  h1 { color: #1a3e6e; }
+  .nav { margin: 0 0 14px 0; }
+  .nav a { display: inline-block; padding: 8px 20px; margin-right: 8px; background: #1a3e6e; color: #fff;
+           text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; }
+  .nav a:hover { background: #2e7dd1; }
+  .nav a.active { background: #2e7dd1; }
+  .slot { background: #fff; border: 1px solid #ccc; border-radius: 8px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.2); padding: 12px 14px; margin-bottom: 16px; }
+  .slot h3 { margin: 2px 0 10px 0; color: #1a3e6e; }
+  .cfg-row { margin: 4px 0; font-size: 14px; }
+  .cfg-row input[type=text] { width: 150px; }
+  .cfg-row input.num { width: 60px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; color: #fff;
+           font-weight: bold; font-size: 12px; margin-left: 8px; }
+  .b-ok   { background: #1a7a2e; }
+  .b-warn { background: #d17f2e; }
+  .b-err  { background: #c0392b; }
+  .b-off  { background: #888; }
+  table { border-collapse: collapse; background: #fff; margin-top: 8px; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 4px 10px; text-align: left; font-size: 13px; }
+  th { background: #1a3e6e; color: #fff; }
+  td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
+  tr.err td { background: #f5a3a3; }
+  tr.meta td { background: #eef2f6; color: #555; }
+  .stale { color: #c00; font-weight: bold; }
+  #globmsg { margin-left: 10px; font-weight: bold; }
+  small.hint { color: #666; }
+</style>
+</head>
+<body>
+<h1>Geraete-Slots (Profil-Loader, read-only)</h1>
+
+<div class="nav">
+  <a href="/status.html">Status</a>
+  <a href="/setup.html">Setup</a>
+  <a href="/test.html">Geraete-Test</a>
+  <a href="/devices.html" class="active">Geraete-Slots</a>
+</div>
+
+<div>
+  <button id="pollbtn">Jetzt pollen</button>
+  <span id="globmsg"></span><br>
+  <small class="hint">Der Poll laeuft im Watchdog (root) - Anzeige aktualisiert sich
+  innerhalb von ca. 5-70 s. Profile liegen in /usr/local/bin/profiles/ (Name ohne .lua).
+  Profile mit write-Block werden abgewiesen (Phase 1: strikt read-only).</small>
+</div>
+
+<div id="slots"></div>
+
+<script>
+var NSLOTS = 4;
+
+// bekannte Profile als Vorschlag (freies Textfeld bleibt moeglich)
+var KNOWN_PROFILES = ["", "solis_s6_hybrid", "kaco_nx3_sunspec", "janitza_umg604",
+                      "tesvolt_bat", "bluesun_udan"];
+
+function el(id) { return document.getElementById(id); }
+
+function buildSlots() {
+  var wrap = el("slots");
+  var html = "";
+  for (var n = 1; n <= NSLOTS; n++) {
+    var opts = KNOWN_PROFILES.map(function (p) {
+      return "<option value='" + p + "'>" + (p || "(leer)") + "</option>";
+    }).join("");
+    html +=
+      "<div class='slot' id='slot" + n + "'>" +
+      "<h3>Slot " + n + "<span class='badge b-off' id='badge" + n + "'>-</span></h3>" +
+      "<div class='cfg-row'>Profil: <select id='psel" + n + "'>" + opts + "</select> " +
+      "oder frei: <input type='text' id='pfree" + n + "' placeholder='profilname'> " +
+      "IP: <input type='text' id='ip" + n + "'> " +
+      "Port: <input type='text' class='num' id='port" + n + "' placeholder='502'> " +
+      "Unit: <input type='text' class='num' id='unit" + n + "' placeholder='1'> " +
+      "<label><input type='checkbox' id='en" + n + "'> aktiv</label> " +
+      "<button id='save" + n + "'>Speichern</button> <span id='msg" + n + "'></span></div>" +
+      "<table id='tbl" + n + "'><tbody></tbody></table>" +
+      "</div>";
+  }
+  wrap.innerHTML = html;
+  for (var m = 1; m <= NSLOTS; m++) {
+    (function (n) {
+      el("save" + n).addEventListener("click", function () { saveSlot(n); });
+    })(m);
+  }
+}
+
+function loadCfg(n) {
+  fetch("/cgi-bin/read_dev.cgi?slot=" + n + "&cfg=1")
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      t.split("\n").forEach(function (line) {
+        var i = line.indexOf("=");
+        if (i < 0) return;
+        var k = line.substring(0, i), v = line.substring(i + 1).trim();
+        if (k === "profile") {
+          if (KNOWN_PROFILES.indexOf(v) >= 0) { el("psel" + n).value = v; el("pfree" + n).value = ""; }
+          else { el("psel" + n).value = ""; el("pfree" + n).value = v; }
+        }
+        if (k === "ip")   el("ip" + n).value = v;
+        if (k === "port") el("port" + n).value = v;
+        if (k === "unit") el("unit" + n).value = v;
+        if (k === "en")   el("en" + n).checked = (v !== "0");
+      });
+    })
+    .catch(function () {});
+}
+
+function saveSlot(n) {
+  var profile = el("pfree" + n).value.trim() || el("psel" + n).value;
+  var q = "slot=" + n +
+          "&profile=" + encodeURIComponent(profile) +
+          "&ip=" + encodeURIComponent(el("ip" + n).value.trim()) +
+          "&port=" + encodeURIComponent(el("port" + n).value.trim()) +
+          "&unit=" + encodeURIComponent(el("unit" + n).value.trim()) +
+          "&en=" + (el("en" + n).checked ? "1" : "0");
+  fetch("/cgi-bin/set_dev.cgi?" + q)
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var m = el("msg" + n);
+      if (t.indexOf("OK") === 0) {
+        m.innerText = "Gespeichert - Poll angefordert.";
+        m.style.color = "#080";
+      } else {
+        m.innerText = t.trim();
+        m.style.color = "#c00";
+      }
+    })
+    .catch(function () {
+      el("msg" + n).innerText = "HTTP-Fehler beim Speichern!";
+      el("msg" + n).style.color = "#c00";
+    });
+}
+
+var META_KEYS = { ts: 1, slot: 1, profile: 1, enabled: 1, unverified: 1,
+                  scan_base: 1, points_ok: 1, points_err: 1, error: 1 };
+
+function setBadge(n, cls, txt) {
+  var b = el("badge" + n);
+  b.className = "badge " + cls;
+  b.innerText = txt;
+}
+
+function loadStatus(n) {
+  fetch("/cgi-bin/read_dev.cgi?slot=" + n)
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      t = t.trim();
+      var tbody = el("tbl" + n).getElementsByTagName("tbody")[0];
+      if (t === "NOSTATUS" || t === "") {
+        setBadge(n, "b-off", "kein Status");
+        tbody.innerHTML = "<tr class='meta'><td colspan='2'>Noch kein Poll-Ergebnis (Slot leer oder Watchdog-Poll steht aus).</td></tr>";
+        return;
+      }
+      var kv = {}, order = [];
+      t.split("\n").forEach(function (line) {
+        var i = line.indexOf("=");
+        if (i < 0) return;
+        var k = line.substring(0, i);
+        kv[k] = line.substring(i + 1);
+        order.push(k);
+      });
+
+      var age = kv.ts ? Math.round(Date.now() / 1000 - parseInt(kv.ts, 10)) : null;
+      var ageTxt = (age === null) ? "" : (age < 120 ? age + " s alt" : Math.round(age / 60) + " min alt");
+      var errc = parseInt(kv.points_err || "0", 10);
+      var okc  = parseInt(kv.points_ok || "0", 10);
+
+      if (kv.enabled === "0")      setBadge(n, "b-off", "deaktiviert");
+      else if (kv.error)           setBadge(n, "b-err", "FEHLER");
+      else if (errc > 0 && okc > 0) setBadge(n, "b-warn", okc + " OK / " + errc + " Fehler");
+      else if (errc > 0)           setBadge(n, "b-err", errc + " Fehler");
+      else if (okc > 0)            setBadge(n, "b-ok", okc + " OK");
+      else                          setBadge(n, "b-off", "-");
+
+      var rows = "";
+      rows += "<tr class='meta'><td>Profil / Stand</td><td>" +
+              (kv.profile || "?") +
+              (kv.unverified === "1" ? " [UNVERIFIZIERT]" : "") +
+              (kv.scan_base ? " | SunSpec-Basis " + kv.scan_base : "") +
+              " | <span class='" + (age !== null && age > 300 ? "stale" : "") + "'>" + ageTxt + "</span></td></tr>";
+      if (kv.error) rows += "<tr class='err'><td>error</td><td>" + kv.error + "</td></tr>";
+      order.forEach(function (k) {
+        if (META_KEYS[k]) return;
+        if (k.indexOf("err_") === 0) {
+          rows += "<tr class='err'><td>" + k.substring(4) + "</td><td>" + kv[k] + "</td></tr>";
+        } else {
+          rows += "<tr><td>" + k + "</td><td class='val'>" + kv[k] + "</td></tr>";
+        }
+      });
+      tbody.innerHTML = rows;
+    })
+    .catch(function () {
+      setBadge(n, "b-err", "HTTP-Fehler");
+    });
+}
+
+function refreshAll() {
+  for (var n = 1; n <= NSLOTS; n++) loadStatus(n);
+}
+
+buildSlots();
+for (var n = 1; n <= NSLOTS; n++) loadCfg(n);
+refreshAll();
+setInterval(refreshAll, 10000);
+
+document.getElementById("pollbtn").addEventListener("click", function () {
+  fetch("/cgi-bin/read_dev.cgi?poll=1")
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var m = document.getElementById("globmsg");
+      if (t.indexOf("REQUESTED") === 0) {
+        m.innerText = "Poll angefordert - Watchdog fuehrt ihn in ca. 5 s aus.";
+        m.style.color = "#080";
+      } else {
+        m.innerText = t.trim();
+        m.style.color = "#c00";
+      }
+    });
+});
+</script>
+
+</body>
+</html>

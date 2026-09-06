@@ -9,6 +9,7 @@
 #  * Failsafe: nach 3 BLUESUN-Fehlern -> passthrough + BLUESUN Standby
 #    (UDAN-EMS Steuerblock 0x1501=3 / 0x1502=0; Herstellerfreigabe
 #    2026-09-04 - das UDAN-EMS hat KEINEN eigenen Watchdog!)
+#  * Geraeteslots (Profil-Loader): periodischer read-only Poll (60 s)
 #  * repariert fehlende Konfigdateien
 #  * einfache Logrotation (max. 500 kB)
 #  * kill per PID statt killall (sauberer auf BusyBox)
@@ -77,10 +78,52 @@ failsafe() {
     lua "$MB" write "$BLUESUN_IP" 502 "$BS_UNIT" 5378 0 >/dev/null 2>&1
 }
 
+
+# ---------------------------------------------------------------------
+# Geraeteslots (Profil-Loader): periodischer read-only Poll als root.
+# Muss im Watchdog laufen: CGIs laufen als uhttpd und duerfen wegen
+# Sticky-Bit in /tmp keine root-eigenen Statusdateien ersetzen.
+# Laeuft AUCH bei gestopptem Proxy (Standorte ohne Steuerung, Phase 1).
+# ---------------------------------------------------------------------
+DEV_LAST_POLL=0
+DEV_POLL_INTERVAL=60
+
+device_poll_tick() {
+    # Konfigaenderung (set_dev.cgi): Scan-Cache + Status verwerfen
+    for n in 1 2 3 4; do
+        if [ -f "/tmp/emsproxy_dev${n}_cfgchange" ]; then
+            rm -f "/tmp/emsproxy_dev${n}_cfgchange" \
+                  "/tmp/emsproxy_dev${n}_scan" \
+                  "/tmp/emsproxy_dev${n}_status"
+            logmsg "Geraeteslot $n: Konfig geaendert - Scan-Cache/Status verworfen"
+        fi
+    done
+    NOW=$(date +%s)
+    FORCE=0
+    [ -f /tmp/emsproxy_poll_req ] && FORCE=1
+    if [ "$FORCE" = "0" ] && [ $((NOW - DEV_LAST_POLL)) -lt "$DEV_POLL_INTERVAL" ]; then
+        return
+    fi
+    ANY=0
+    for n in 1 2 3 4; do
+        [ -s "/etc/tesvolt_dev${n}_profile" ] && ANY=1
+    done
+    if [ "$ANY" = "1" ] && [ -f /usr/local/bin/device_poll.lua ]; then
+        [ "$FORCE" = "1" ] && logmsg "Geraeteslot-Poll per UI angefordert"
+        lua /usr/local/bin/device_poll.lua >/dev/null 2>&1
+    fi
+    rm -f /tmp/emsproxy_poll_req
+    DEV_LAST_POLL=$NOW
+}
+
 logmsg "Watchdog gestartet"
 
 while true; do
     rotate_log
+
+    # 0a) Geraeteslots pollen - VOR dem enabled-Check, damit der Poll
+    #     auch bei gestopptem Proxy laeuft (z.B. Standort Hebauer)
+    device_poll_tick
 
     # 0) Start/Stop-Wunsch der Setup-UI umsetzen
     ENABLED=$(cat /etc/tesvolt_proxy_enabled 2>/dev/null)
