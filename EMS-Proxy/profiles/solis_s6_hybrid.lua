@@ -3,11 +3,16 @@
 -- Quelle: RS485_MODBUS ESINV-33000ID Hybrid Inverter v3.4 (FC04)
 -- Standort: Hebauer. Phase 1: NUR LESEN - kein write-Block!
 --
--- Anbindung: RS485 Modbus RTU 9600 8N1 ueber Solis-Datalogger mit
--- Netzwerkschnittstelle. VORAUSSETZUNG (am Geraet verifizieren!):
--- Der Datalogger muss transparentes Modbus TCP (Port 502) durchreichen.
--- Timing lt. INV-Protokoll v3.7: >= 300 ms zwischen Lese-Frames,
--- max. 50 Register pro Frame.
+-- Anbindung: Solis-Datalogger S2-WL-ST (LAN-Anschluss).
+-- Der S2-WL-ST unterstuetzt Modbus TCP NATIV (Herstellerangabe,
+-- Solis "Modbus TCP Communication Guide for S2-WL-ST"):
+--  * Modbus-TCP-Server auf Port 502 (Default)
+--  * Direktanschluss-Default-IP: 10.10.100.254 (im LAN per DHCP,
+--    statische IP ueber SolisCloud-App "LAN Settings" empfohlen)
+--  * Register-Adressierung im Guide beginnt bei 0 -> ggf. Offset -1
+--    gegenueber der Protokollliste testen (33139 vs. 33138)!
+-- Timing lt. Protokoll: >= 300 ms zwischen Lese-Frames,
+-- max. 50 Register pro Frame (RTU-Seite 9600 8N1).
 --
 -- Vorzeichen-/Richtungskonventionen (WICHTIG):
 --  * Batterie: 33149/50 ist der BETRAG; Richtung kommt aus 33135
@@ -21,6 +26,8 @@ return {
   id           = "solis_s6_hybrid",
   name         = "Solis S6 Hybrid 50kW (ESINV-33000ID v3.4)",
   role         = "inverter_battery",
+  conn         = "tcp",     -- via S2-WL-ST Datalogger, Port 502
+  port         = 502,
   unit_id      = 1,        -- Slave-Adresse am Datalogger; am Geraet pruefen!
   min_gap_ms   = 300,      -- Herstellervorgabe Lese-Intervall
   max_regs     = 50,       -- max. Register pro Frame
