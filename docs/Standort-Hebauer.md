@@ -8,7 +8,7 @@
 | Geraet | Modell | Anbindung | Profil | Status |
 |---|---|---|---|---|
 | Hybrid-WR + Batterie | Solis S6 Hybrid 50 kW | Datalogger S2-WL-ST (LAN), Modbus TCP Port 502 | profiles/solis_s6_hybrid.lua | Register aus ESINV-33000ID v3.4; S2-WL-ST unterstuetzt Modbus TCP NATIV (Herstellerangabe) |
-| PV-WR | Kaco blueplanet NX3 10 kW | Modbus TCP (SunSpec, Annahme) | profiles/kaco_nx3_sunspec.lua | VORLAEUFIG - Kaco-Doku fehlt, Modellkette am Geraet scannen |
+| PV-WR | Kaco blueplanet NX3 10 kW | Modbus TCP/RTU, SunSpec (FW V07+) | profiles/kaco_nx3_sunspec.lua | Modelle lt. KACO-Implementierungsliste BESTAETIGT; Adressen NUR per Model Scan (KACO-Vorgabe) |
 | Netzzaehler | Janitza UMG 604 (ohne Pro) | Modbus TCP Port 502 | profiles/janitza_umg604.lua | Psum 19026 f32be aus Doku; am Geraet verifizieren |
 
 ## Datalogger S2-WL-ST (Solis) - Modbus TCP
@@ -30,6 +30,37 @@ Logger" (usservice.solisinverters.com, v1.1 vom 2024-05-29).
   Slave-Adresse des WR.
 * Timing der RTU-Seite gilt weiter: >= 300 ms zwischen Lese-Frames,
   max. 50 Register/Frame.
+
+## Kaco blueplanet NX3 - SunSpec (Implementierungsliste)
+
+Quelle: KACO blueplanet NX1/NX3 Inverter-specific SunSpec-Liste
+(Firmwarebereich V07 bis V.xy, Modbus TCP + Modbus RTU).
+
+Von KACO bestaetigt implementierte SunSpec-Modelle:
+
+| Modell-ID | Bezeichnung |
+|---|---|
+| 001 | Common |
+| 103 | Inverter Three Phase |
+| 120 | Nameplate |
+| 121 | Basic Settings |
+| 123 | Immediate Controls |
+| 160 | Multiple MPPT Inverter Extension |
+| 701 | DER AC Measurement |
+| 702 | DER Capacity |
+| 704 | DER AC Controls |
+| 714 | DER Enter Service |
+| 715 | DER Frequency-Watt |
+
+WICHTIG (KACO-Vorgabe): KEINE festen absoluten Registeradressen
+uebernehmen - sie gelten nur fuer eine konkrete Firmware. Modelle und
+Startadressen zur Laufzeit per **SunSpec Model Scan** ermitteln
+("SunS" an 0/40000/50000, Kette bis Modell-ID 0xFFFF). Das Profil
+arbeitet deshalb mit modell-relativen Offsets (model + offset).
+Scale-Faktoren (sunssf) beachten: Echtwert = Rohwert * 10^SF,
+NOT IMPLEMENTED = 0x8000; SF ist statisch (einmal lesen + cachen).
+Schreibzugriff erfordert bei KACO eine separate Aktivierung am
+Geraet (fuer Phase 1 irrelevant, read-only).
 
 ## Solis S6 Hybrid - Kernregister (ESINV-33000ID v3.4, FC04)
 
@@ -66,8 +97,11 @@ Hinweis Mehrgeraete-Summen (falls spaeter mehrere Solis parallel):
    adressiert ab 0)? Mit test.html (read-only) klaeren.
 3. Solis Slave-Adresse (Default 1?) und Erreichbarkeit ueber den
    Datalogger testen.
-4. Kaco NX3: SunSpec-Kennung 'SunS' bei 40000 lesen, Modellkette
-   scannen, W/Hz/SF-Adressen bestaetigen, Unit-ID klaeren.
+4. Kaco NX3: ~~SunSpec-Unterstuetzung klaeren~~ ERLEDIGT 2026-09-06
+   (Implementierungsliste, Modelle 001/103/120/121/123/160/701/702/
+   704/714/715 bestaetigt). Noch offen: Firmware-Version pruefen
+   (>= V07), Model Scan am Geraet ausfuehren (Startadressen +
+   SF-Werte), Unit-ID klaeren, Modbus-TCP am Geraet aktivieren.
 5. Janitza UMG 604: Psum 19026 (f32be) und Word-Order am Geraet
    verifizieren; Unit-ID klaeren.
 6. Router fuer Hebauer: eigenes GitHub-Token, Bootstrap nach
@@ -76,6 +110,7 @@ Hinweis Mehrgeraete-Summen (falls spaeter mehrere Solis parallel):
 ## Phase 2 (spaeter, NICHT in diesem Stand)
 
 Steuerung der Solis-Batterie ueber 43xxx-Register (FC03/06/10,
->= 700 ms Steuerintervall). Erst nach Phase-1-Verifikation und
-separater Freigabe - dann bekommt das Profil einen write-Block
-inkl. Failsafe-Konzept.
+>= 700 ms Steuerintervall). Kaco-Schreibzugriff erfordert separate
+Aktivierung am Geraet (Modelle 123/704/714/715 waeren vorhanden).
+Erst nach Phase-1-Verifikation und separater Freigabe - dann bekommt
+das jeweilige Profil einen write-Block inkl. Failsafe-Konzept.
