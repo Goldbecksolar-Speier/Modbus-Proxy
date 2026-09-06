@@ -13,6 +13,10 @@
 --  * Netzanschluss-Limit (grid): Gesamtleistung wird VOR dem Split
 --    geclampt und NACH der Rest-Umverteilung nochmals gesichert
 --    (die Umverteilung koennte die Summe sonst wieder anheben)
+--  * Aktivierungsflags (en): deaktiviertes Geraet (en_t/en_b = 0,
+--    z.B. CAN-Bus-Anbindung) erhaelt Gewicht 0 UND Limit 0 - auch die
+--    Rest-Umverteilung kann ihm nichts zuweisen; 100 % gehen an das
+--    andere Geraet (innerhalb seiner Limits); beide deaktiviert -> 0/0
 -- =====================================================================
 
 local M = {}
@@ -32,10 +36,20 @@ end
 -- grid     : optionale Tabelle { chg, dis } (W, positiv) -
 --            maximale GESAMT-Leistung am Netzanschluss pro Richtung.
 --            Nur im Split-Modus wirksam (Passthrough greift nicht ein).
+-- en       : optionale Tabelle { t = true|false, b = true|false } -
+--            Aktivierungsflags aus /etc/tesvolt_en_t / _en_b.
+--            Fehlt die Tabelle oder ein Eintrag, gilt das Geraet als
+--            AKTIV (rueckwaertskompatibel zu alten Aufrufern).
 -- Rueckgabe: P_T, P_B (mit Vorzeichen wie P_req)
-function M.split_power(P_req, SOC_T, SOC_B, Cap_T, Cap_B, mode, split_mode, limits, grid)
+function M.split_power(P_req, SOC_T, SOC_B, Cap_T, Cap_B, mode, split_mode, limits, grid, en)
   if mode == "passthrough" then
     return P_req, 0
+  end
+
+  local en_t = not (en and en.t == false)
+  local en_b = not (en and en.b == false)
+  if not en_t and not en_b then
+    return 0, 0  -- beide Geraete deaktiviert: nichts zu verteilen
   end
 
   SOC_T = clampval(tonumber(SOC_T) or 0, 0, 100)
@@ -80,23 +94,34 @@ function M.split_power(P_req, SOC_T, SOC_B, Cap_T, Cap_B, mode, split_mode, limi
     end
   end
 
+  -- Aktivierungsflags ueberschreiben die Gewichtung: das deaktivierte
+  -- Geraet bekommt nichts, das andere 100 % (innerhalb seiner Limits)
+  if not en_t then w_t = 0 end
+  if not en_b then w_t = 1 end
+
   local P_T = P_abs * w_t
   local P_B = P_abs - P_T
 
+  -- Wirksame Einzel-Limits: aus limits-Tabelle, deaktivierte Seite = 0
+  -- (damit die Rest-Umverteilung ihr nie etwas zuweisen kann)
+  local lim_t = math.huge
+  local lim_b = math.huge
   if limits then
-    local lim_t = (sign >= 0) and (limits.dis_t or math.huge) or (limits.chg_t or math.huge)
-    local lim_b = (sign >= 0) and (limits.dis_b or math.huge) or (limits.chg_b or math.huge)
+    lim_t = (sign >= 0) and (limits.dis_t or math.huge) or (limits.chg_t or math.huge)
+    lim_b = (sign >= 0) and (limits.dis_b or math.huge) or (limits.chg_b or math.huge)
+  end
+  if not en_t then lim_t = 0 end
+  if not en_b then lim_b = 0 end
 
-    if P_T > lim_t then
-      local rest = P_T - lim_t
-      P_T = lim_t
-      P_B = math.min(P_B + rest, lim_b)
-    end
-    if P_B > lim_b then
-      local rest = P_B - lim_b
-      P_B = lim_b
-      P_T = math.min(P_T + rest, lim_t)
-    end
+  if P_T > lim_t then
+    local rest = P_T - lim_t
+    P_T = lim_t
+    P_B = math.min(P_B + rest, lim_b)
+  end
+  if P_B > lim_b then
+    local rest = P_B - lim_b
+    P_B = lim_b
+    P_T = math.min(P_T + rest, lim_t)
   end
 
   -- Finale Sicherung: Summe darf das Netzlimit nicht ueberschreiten

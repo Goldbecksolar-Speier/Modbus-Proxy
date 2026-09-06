@@ -18,6 +18,20 @@
 --                   0x1505 PCS Start/Stop  = 1 Start / 2 Stop
 --                 Herstellervorgabe: min. 200 ms zwischen Requests.
 --
+-- Aktivierungsflags (Setup-Seite, Bereich "Geraete"):
+--   * /etc/tesvolt_en_t = 0: Tesvolt-Batterie NICHT per Modbus/TCP
+--     ansprechen (z.B. CAN-Bus-Anbindung ans EMS). Der Proxy liest/
+--     schreibt dann NICHTS an die Tesvolt-IP; im Split-Modus gehen
+--     100 % an BLUESUN, Passthrough-Anfragen werden mit Exception
+--     0x0A beantwortet.
+--   * /etc/tesvolt_en_b = 0: BLUESUN NICHT ansprechen. Split verhaelt
+--     sich wie Passthrough (100 % Tesvolt). Beim Deaktivieren wird
+--     BLUESUN EINMALIG in den sicheren Zustand gebracht (Standby +
+--     0 kW), da das UDAN-EMS keinen eigenen Watchdog hat.
+--   * /etc/tesvolt_en_sma wird vom Proxy NICHT ausgewertet (nur
+--     Status-/Test-UI); der Proxy spricht keine SMA-Geraete an.
+--   * Fehlende Dateien gelten als 1 (aktiv, rueckwaertskompatibel).
+--
 -- Netzanschluss-Limit (nur Split-Modus!):
 --   * /etc/tesvolt_grid_max_chg / _dis (kW, Setup-UI) = harte Obergrenze
 --   * /etc/tesvolt_grid_use_ems = 1: zusaetzlich EMS-Register 40003/40004
@@ -52,6 +66,7 @@
 --   * BLUESUN 3x nicht erreichbar -> automatisch passthrough +
 --     BLUESUN Standby (0x1501=3, 0x1502=0)
 --   * Kein EMS-Sollwert seit > ems_timeout_s -> BLUESUN Standby
+--   * en_b-Wechsel auf 0 -> einmalig BLUESUN Standby + 0 kW
 --   * Fehler werden nach /var/log/ems_proxy.log geschrieben
 -- =====================================================================
 
@@ -118,6 +133,14 @@ end
 local function get_mode()       return read_file("/etc/tesvolt_proxy_mode", "passthrough") end
 local function get_split_mode() return read_file("/etc/tesvolt_split_mode", "capacity") end
 local function get_sim()        return read_file("/etc/tesvolt_sim", "0") == "1" end
+
+-- Aktivierungsflags (Setup-Seite): fehlende Datei = aktiv (Default 1).
+-- en_sma wird bewusst NICHT gelesen - der Proxy spricht keine SMA-Geraete an.
+local function get_enables()
+  local en_t = read_file("/etc/tesvolt_en_t", "1") ~= "0"
+  local en_b = read_file("/etc/tesvolt_en_b", "1") ~= "0"
+  return en_t, en_b
+end
 
 local function get_caps()
   local ct = tonumber(read_file("/etc/tesvolt_cap_t", "0")) or 0
@@ -281,20 +304,33 @@ local function bluesun_safe_state(reason)
   last_bs_write_t = socket.gettime()
 end
 
+-- en_b-Wechsel auf 0: BLUESUN EINMALIG in den sicheren Zustand bringen
+-- (danach keine weiteren Zugriffe, bis en_b wieder 1 ist)
+local bs_off_handled = false
+local function handle_bs_disabled()
+  if bs_off_handled then return end
+  if CFG.bluesun_ip ~= nil then
+    bluesun_safe_state("en_b=0, Geraet deaktiviert")
+  end
+  bs_initialized = false
+  bs_off_handled = true
+end
+
 -- ------------------------- Netzanschluss-Limit ----------------------
 -- Liefert { chg = W, dis = W } oder nil (kein Limit gesetzt).
 -- Setup-Werte sind kW (Setup-UI); EMS-Register-Werte werden als W
 -- angenommen (Skalierung UNVERIFIZIERT - deshalb Checkbox default aus).
 -- Wirksam ist pro Richtung das MINIMUM beider Quellen. Faellt die
 -- EMS-Abfrage aus, gilt der Setup-Wert (fail-safe).
-local function get_grid_limits()
+-- en_t = false: EMS-Register NICHT abfragen (Tesvolt-Strecke deaktiviert).
+local function get_grid_limits(en_t)
   local chg = tonumber(read_file("/etc/tesvolt_grid_max_chg", ""))
   local dis = tonumber(read_file("/etc/tesvolt_grid_max_dis", ""))
   local use_ems = read_file("/etc/tesvolt_grid_use_ems", "0") == "1"
   local g = {}
   if chg and chg > 0 then g.chg = chg * 1000 end  -- kW -> W
   if dis and dis > 0 then g.dis = dis * 1000 end
-  if use_ems then
+  if use_ems and en_t then
     local ems_chg = mb_read(CFG.tesvolt_ip, 3, EMS.CHG_LIM_ADDR)
     local ems_dis = mb_read(CFG.tesvolt_ip, 3, EMS.DIS_LIM_ADDR)
     if ems_chg and ems_chg > 0 and (not g.chg or ems_chg < g.chg) then g.chg = ems_chg end
@@ -382,20 +418,48 @@ local function failsafe_passthrough(reason)
 end
 
 -- Verarbeitet einen Schreibbefehl des EMS auf das SetPower-Register
+local en_t_setpower_logged = false
+local en_b_split_logged = false
 local function handle_setpower(p_req)
   last_ems_setpoint_t = socket.gettime()
   ems_stale = false
 
   local mode = get_mode()
-  if mode ~= "split" or CFG.bluesun_ip == nil then
+  local en_t, en_b = get_enables()
+
+  -- en_b-Wechsel behandeln (einmaliger Safe-State beim Deaktivieren)
+  if en_b then
+    bs_off_handled = false
+  else
+    handle_bs_disabled()
+  end
+
+  if mode ~= "split" or CFG.bluesun_ip == nil or not en_b then
     if mode == "split" and CFG.bluesun_ip == nil then
       log("SPLIT angefordert, aber BLUESUN-IP nicht konfiguriert -> passthrough")
     end
+    if mode == "split" and not en_b and not en_b_split_logged then
+      log("SPLIT angefordert, aber en_b=0 (BLUESUN deaktiviert) -> passthrough")
+      en_b_split_logged = true
+    end
+    if not en_t then
+      -- Tesvolt deaktiviert (z.B. CAN): kein Ziel fuer den Sollwert
+      if not en_t_setpower_logged then
+        log("SetPower verworfen: en_t=0 (Tesvolt-Batterie nicht per Modbus/TCP angebunden)")
+        en_t_setpower_logged = true
+      end
+      return nil, "en_t=0"
+    end
+    en_t_setpower_logged = false
     -- Passthrough: KEIN Eingriff in die Tesvolt-Steuerung (User-Vorgabe)
     return mb_write(CFG.tesvolt_ip, EMS.SETPOWER, p_req)
   end
+  en_b_split_logged = false
 
-  local soc_t = mb_read(CFG.tesvolt_ip, 4, EMS.SOC) or 0
+  local soc_t = 0
+  if en_t then
+    soc_t = mb_read(CFG.tesvolt_ip, 4, EMS.SOC) or 0
+  end
   local soc_b = bs_read(4, BS.SOC)
 
   if soc_b == nil then
@@ -404,15 +468,17 @@ local function handle_setpower(p_req)
     if bluesun_fail_count >= BLUESUN_FAIL_LIMIT then
       failsafe_passthrough("BLUESUN " .. BLUESUN_FAIL_LIMIT .. "x nicht erreichbar")
     end
+    if not en_t then return nil, "en_t=0 und BLUESUN nicht lesbar" end
     return mb_write(CFG.tesvolt_ip, EMS.SETPOWER, p_req)
   end
   bluesun_fail_count = 0
 
   local cap_t, cap_b = get_caps()
   local limits = read_limits()
-  local grid   = get_grid_limits()
+  local grid   = get_grid_limits(en_t)
   local p_t, p_b = split.split_power(p_req, soc_t, soc_b, cap_t, cap_b,
-                                     "split", get_split_mode(), limits, grid)
+                                     "split", get_split_mode(), limits, grid,
+                                     { t = en_t, b = en_b })
 
   -- Geclampte Anfragen loggen (Netzanschluss-Schutz)
   local sum = math.abs(p_t + p_b)
@@ -422,11 +488,14 @@ local function handle_setpower(p_req)
         tostring(grid.chg), tostring(grid.dis)))
   end
 
-  local ok1, e1 = mb_write(CFG.tesvolt_ip, EMS.SETPOWER, math.floor(p_t))
+  local ok1, e1 = true, nil
+  if en_t then
+    ok1, e1 = mb_write(CFG.tesvolt_ip, EMS.SETPOWER, math.floor(p_t))
+  end
   local ok2, e2 = write_bluesun_setpoint(math.floor(p_b))
 
-  log(string.format("SPLIT req=%dW -> T=%dW B=%dW (soc_t=%d soc_b=%d)",
-      p_req, p_t, p_b, soc_t, soc_b))
+  log(string.format("SPLIT req=%dW -> T=%dW B=%dW (soc_t=%d soc_b=%d en_t=%s en_b=%s)",
+      p_req, p_t, p_b, soc_t, soc_b, tostring(en_t), tostring(en_b)))
 
   if not ok1 then log("Tesvolt write error: " .. tostring(e1)) end
   if not ok2 then log("BLUESUN write error: " .. tostring(e2)) end
@@ -436,15 +505,18 @@ end
 -- ------------------------- Modbus TCP Server ------------------------
 local unconfigured_logged = false
 local sim_logged = false
+local en_t_pass_logged = false
 
 local function serve()
   load_ips()
+  local en_t0, en_b0 = get_enables()
   local server = assert(socket.bind("0.0.0.0", CFG.listen_port))
   server:settimeout(1)
   log("EMS-Proxy gestartet auf Port " .. CFG.listen_port ..
       " (Tesvolt=" .. tostring(CFG.tesvolt_ip) ..
       ", BLUESUN=" .. tostring(CFG.bluesun_ip) ..
       ", BS-Unit=" .. tostring(CFG.bluesun_unit) ..
+      ", en_t=" .. tostring(en_t0) .. ", en_b=" .. tostring(en_b0) ..
       (get_sim() and ", SIMULATION AKTIV" or "") .. ")")
   if not get_sim() and not is_configured() then
     log("WARNUNG: IPs nicht konfiguriert - bitte Setup aufrufen (setup.html). " ..
@@ -487,12 +559,24 @@ local function serve()
             handle_setpower(val)
             resp_pdu = body -- Echo gemaess Modbus-Norm FC06
           else
-            local resp, err = mb_request(CFG.tesvolt_ip, body)
-            if resp then
-              resp_pdu = resp
+            local en_t = get_enables()
+            if not en_t then
+              -- Tesvolt deaktiviert (z.B. CAN): sofortige Exception statt
+              -- 2-s-Connect-Timeout gegen ein nicht angebundenes Geraet
+              if not en_t_pass_logged then
+                log("Passthrough abgelehnt: en_t=0 (Exception 0x0A)")
+                en_t_pass_logged = true
+              end
+              resp_pdu = string.char(fc + 0x80, 0x0A) -- Gateway Path Unavailable
             else
-              log("Passthrough-Fehler FC" .. fc .. " addr " .. addr .. ": " .. tostring(err))
-              resp_pdu = string.char(fc + 0x80, 0x0B) -- Gateway Target Failed
+              en_t_pass_logged = false
+              local resp, err = mb_request(CFG.tesvolt_ip, body)
+              if resp then
+                resp_pdu = resp
+              else
+                log("Passthrough-Fehler FC" .. fc .. " addr " .. addr .. ": " .. tostring(err))
+                resp_pdu = string.char(fc + 0x80, 0x0B) -- Gateway Target Failed
+              end
             end
           end
 
@@ -513,6 +597,16 @@ local function serve()
         bluesun_safe_state("kein EMS-Sollwert seit " ..
                            CFG.ems_timeout_s .. " s")
         ems_stale = true
+      end
+      -- en_b im Leerlauf auswerten: Deaktivierung wirkt auch dann,
+      -- wenn das EMS gerade keine Sollwerte schickt
+      if not get_sim() and CFG.bluesun_ip ~= nil then
+        local _, en_b = get_enables()
+        if en_b then
+          bs_off_handled = false
+        else
+          handle_bs_disabled()
+        end
       end
     end
   end
