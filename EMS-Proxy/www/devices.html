@@ -27,6 +27,7 @@
   td.val { font-weight: bold; text-align: right; font-variant-numeric: tabular-nums; }
   tr.err td { background: #f5a3a3; }
   tr.meta td { background: #eef2f6; color: #555; }
+  td.reg { color: #666; font-family: Consolas, monospace; font-size: 12px; white-space: nowrap; }
   .stale { color: #c00; font-weight: bold; }
   #globmsg { margin-left: 10px; font-weight: bold; }
   small.hint { color: #666; }
@@ -139,6 +140,44 @@ function saveSlot(n) {
 var META_KEYS = { ts: 1, slot: 1, profile: 1, enabled: 1, unverified: 1,
                   scan_base: 1, points_ok: 1, points_err: 1, error: 1 };
 
+// Register-Referenz je Profil (aus EMS-Proxy/profiles/*.lua, nur Anzeige).
+// Kaco: KEINE Absolutadressen (KACO-Vorgabe) - modell-relativ M<id>+<offset>,
+// Absolutadresse ergibt sich erst aus dem SunSpec-Scan.
+var REG_MAP = {
+  solis_s6_hybrid: {
+    pv_power:    "33057 FC04 u32be",
+    ac_power:    "33079 FC04 s32be",
+    grid_freq:   "33094 FC04 u16 x0.01",
+    status:      "33095 FC04 u16",
+    fault:       "33070 FC04 u16",
+    bat_voltage: "33133 FC04 u16 x0.1",
+    bat_current: "33134 FC04 s16 x0.1",
+    bat_dir:     "33135 FC04 u16 (0=Laden,1=Entladen)",
+    bat_soc:     "33139 FC04 u16",
+    bat_soh:     "33140 FC04 u16",
+    bat_power:   "33149 FC04 s32be (Richtung 33135)",
+    grid_port_p: "33151 FC04 s32be",
+    meter_power: "33263 FC04 s32be",
+    house_load:  "33147 FC04 u16"
+  },
+  janitza_umg604: {
+    p_l1:  "19020 FC03 f32be",
+    p_l2:  "19022 FC03 f32be",
+    p_l3:  "19024 FC03 f32be",
+    p_sum: "19026 FC03 f32be"
+  },
+  kaco_nx3_sunspec: {
+    ac_power: "M103+14 s16 (SF +15)",
+    ac_freq:  "M103+16 u16 (SF +17)",
+    status:   "M103+36 u16"
+  }
+};
+
+function regFor(profile, key) {
+  var m = REG_MAP[profile];
+  return (m && m[key]) ? m[key] : "";
+}
+
 function setBadge(n, cls, txt) {
   var b = el("badge" + n);
   b.className = "badge " + cls;
@@ -153,7 +192,7 @@ function loadStatus(n) {
       var tbody = el("tbl" + n).getElementsByTagName("tbody")[0];
       if (t === "NOSTATUS" || t === "") {
         setBadge(n, "b-off", "kein Status");
-        tbody.innerHTML = "<tr class='meta'><td colspan='2'>Noch kein Poll-Ergebnis (Slot leer oder Watchdog-Poll steht aus).</td></tr>";
+        tbody.innerHTML = "<tr class='meta'><td colspan='3'>Noch kein Poll-Ergebnis (Slot leer oder Watchdog-Poll steht aus).</td></tr>";
         return;
       }
       var kv = {}, order = [];
@@ -177,19 +216,23 @@ function loadStatus(n) {
       else if (okc > 0)            setBadge(n, "b-ok", okc + " OK");
       else                          setBadge(n, "b-off", "-");
 
+      var prof = kv.profile || "";
       var rows = "";
-      rows += "<tr class='meta'><td>Profil / Stand</td><td>" +
+      rows += "<tr class='meta'><td>Profil / Stand</td><td colspan='2'>" +
               (kv.profile || "?") +
               (kv.unverified === "1" ? " [UNVERIFIZIERT]" : "") +
               (kv.scan_base ? " | SunSpec-Basis " + kv.scan_base : "") +
               " | <span class='" + (age !== null && age > 300 ? "stale" : "") + "'>" + ageTxt + "</span></td></tr>";
-      if (kv.error) rows += "<tr class='err'><td>error</td><td>" + kv.error + "</td></tr>";
+      if (kv.error) rows += "<tr class='err'><td>error</td><td colspan='2'>" + kv.error + "</td></tr>";
       order.forEach(function (k) {
         if (META_KEYS[k]) return;
         if (k.indexOf("err_") === 0) {
-          rows += "<tr class='err'><td>" + k.substring(4) + "</td><td>" + kv[k] + "</td></tr>";
+          var nm = k.substring(4);
+          rows += "<tr class='err'><td>" + nm + "</td><td class='reg'>" + regFor(prof, nm) +
+                  "</td><td>" + kv[k] + "</td></tr>";
         } else {
-          rows += "<tr><td>" + k + "</td><td class='val'>" + kv[k] + "</td></tr>";
+          rows += "<tr><td>" + k + "</td><td class='reg'>" + regFor(prof, k) +
+                  "</td><td class='val'>" + kv[k] + "</td></tr>";
         }
       });
       tbody.innerHTML = rows;
