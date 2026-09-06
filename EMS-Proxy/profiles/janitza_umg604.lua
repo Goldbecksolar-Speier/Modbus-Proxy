@@ -6,19 +6,20 @@
 -- Quelle: janitza-mal/bhb-umg604 (Knowledge): Modbus TCP Port 502,
 -- Float32-Block ab 19000: 19000/19002/19004 = UL1/UL2/UL3-N,
 -- 19020/19022/19024 = P L1/L2/L3, 19026 = Psum. Alles BIG-ENDIAN.
--- STATUS Verifikation am Geraet (2026-09-06): P-Werte intern
--- konsistent (L1+L2+L3 ~ Psum) -> f32be/Word-Order OK;
--- Display-Vergleich (Absolutwerte) noch offen.
+--
+-- VERIFIZIERT am Geraet (Hebauer, 2026-09-06):
+--  * U L-N ~227 V plausibel -> Registerlage + f32be Word-Order OK
+--  * P: L1+L2+L3 ~ Psum (124,2 ~ 128,3 W) -> intern konsistent
+--  * Unit-ID 1, Port 502 via devices.html/device_poll bestaetigt
 -- =====================================================================
 
 return {
   id           = "janitza_umg604",
   name         = "Janitza UMG 604 (Netzzaehler)",
   role         = "meter",
-  unit_id      = 1,        -- Default; am Geraet verifizieren
+  unit_id      = 1,        -- am Geraet bestaetigt (2026-09-06)
   min_gap_ms   = 100,
   has_watchdog = true,     -- irrelevant, read-only
-  unverified   = true,     -- Display-Vergleich der Absolutwerte offen
 
   read = {
     u_l1n = { addr = 19000, fc = 3, type = "f32be", scale = 1, unit = "V" },  -- Spannung L1-N
