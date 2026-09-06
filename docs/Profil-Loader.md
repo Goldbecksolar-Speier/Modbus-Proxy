@@ -11,6 +11,10 @@
 | EMS-Proxy/usr/bin/profile_loader.lua | Modul: Profil laden (dofile), Modbus-TCP-Multiregister-Read, Typ-Decoder (u16/s16/u32be/s32be/f32be), SunSpec Model Scan, sunssf-Anwendung, NOT-IMPLEMENTED-Sentinels, Richtungsregister (Solis) |
 | EMS-Proxy/usr/bin/device_poll.lua | CLI/Poller: liest Slots /etc/tesvolt_devN_*, pollt alle Messpunkte des Profils, schreibt /tmp/emsproxy_devN_status |
 | EMS-Proxy/profiles/*.lua | Geraeteprofile (Lua-Tabellen, dofile-kompatibel) |
+| EMS-Proxy/www/devices.html | Web-UI: Slot-Konfiguration + Live-Status (Port 8080) |
+| EMS-Proxy/cgi-bin/read_dev.cgi | Status/Konfig lesen; poll=1 fordert Sofort-Poll an |
+| EMS-Proxy/cgi-bin/set_dev.cgi | Slot-Konfig schreiben (gefilterte Eingaben) |
+| EMS-Proxy/usr/bin/ems_watchdog.sh | device_poll_tick(): pollt Slots alle 60 s als root |
 
 ## Geraeteslots (N = 1..4)
 
@@ -25,7 +29,26 @@
 github_update.sh legt die Slot-Dateien an und setzt uhttpd-Rechte
 (WICHTIG: nach diesem Update ZWEIMAL ausfuehren - Selbst-Update-Effekt).
 
-## Aufruf auf dem Router
+## Web-UI (devices.html)
+
+http://ROUTER-IP:8080/devices.html - pro Slot: Profil (Auswahl oder
+frei), IP, Port, Unit, aktiv-Haken, Speichern; darunter Live-Status
+(Badge gruen/orange/rot, Messwerte, Fehlerzeilen rot, Alter des Stands).
+
+Ablauf im Hintergrund:
+
+1. Der WATCHDOG (root) pollt alle 60 s alle belegten Slots
+   (device_poll_tick, VOR dem enabled-Check -> laeuft auch bei
+   gestopptem Proxy, z.B. Standort Hebauer Phase 1).
+2. CGIs laufen als User uhttpd und duerfen wegen des Sticky-Bits in
+   /tmp keine root-eigenen Statusdateien ersetzen - deshalb liest
+   read_dev.cgi nur und fordert Polls per Marker-Datei an:
+   /tmp/emsproxy_poll_req -> Watchdog pollt beim naechsten 5-s-Tick.
+3. set_dev.cgi setzt zusaetzlich /tmp/emsproxy_devN_cfgchange ->
+   Watchdog verwirft Scan-Cache + Status des Slots (sauberer Neustart
+   nach Konfigaenderung, wichtig fuer SunSpec-Scan bei IP/Unit-Wechsel).
+
+## Aufruf auf dem Router (manuell, alternativ zur UI)
 
     lua /usr/local/bin/device_poll.lua        # alle belegten Slots
     lua /usr/local/bin/device_poll.lua 1      # nur Slot 1
@@ -69,23 +92,27 @@ einmal gelesen (Spec: SF ist statisch).
 
 1. Update einspielen (ZWEIMAL wegen neuer Konfigdateien):
    /usr/local/bin/github_update.sh site/hebauer (2x)
-2. Slots konfigurieren, z.B.:
+2. Slots konfigurieren - am einfachsten per UI
+   (http://ROUTER-IP:8080/devices.html) oder per SSH:
    echo solis_s6_hybrid > /etc/tesvolt_dev1_profile
    echo <IP-S2-WL-ST>   > /etc/tesvolt_dev1_ip
    echo kaco_nx3_sunspec > /etc/tesvolt_dev2_profile
    echo <IP-KACO>        > /etc/tesvolt_dev2_ip
    echo janitza_umg604   > /etc/tesvolt_dev3_profile
    echo <IP-UMG604>      > /etc/tesvolt_dev3_ip
-3. lua /usr/local/bin/device_poll.lua && cat /tmp/emsproxy_dev*_status
+3. UI: "Jetzt pollen" - oder lua /usr/local/bin/device_poll.lua &&
+   cat /tmp/emsproxy_dev*_status
 4. Solis: SOC plausibel? Sonst Offset-Test 33138 (Solis-Guide zaehlt ab 0).
 5. Kaco: scan_base + Modellliste pruefen (erwartet u.a. 1, 103, 160, 701).
 6. Janitza: Psum gegen Anzeige am Zaehler vergleichen.
 7. Ergebnisse in docs/Learnings.md nachtragen, unverified-Flags entfernen.
 
-## Offen (Schritt 3+)
+## Offen (Schritt 4+)
 
-* Periodischer Aufruf (Watchdog-Zeile oder eigener Loop) statt manuell.
-* status.html-Panel, das /tmp/emsproxy_devN_status anzeigt (read_dev.cgi).
-* Setup-UI-Sektion fuer die Slot-Konfiguration.
+* Browser-/Geraetetest der UI vor Ort (devices.html bisher nur
+  syntaktisch verifiziert: sh -n, node --check, CGI-Funktionstests).
+* Nav-Link "Geraete-Slots" auch in status.html und test.html ergaenzen
+  (bewusst zurueckgestellt - beide Dateien sind Brand-lastig und
+  wuerden bei site/brand-Merges kollidieren).
 * Uebernahme nach main + Brand-Profile (tesvolt_bat, bluesun_udan,
   sma_edmm) nach Merge von PR #2 / feature/device-test-ui.
