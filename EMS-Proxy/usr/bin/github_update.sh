@@ -11,6 +11,7 @@
 #   / ist squashfs (READ-ONLY). Beschreibbar sind nur /etc und /usr/local
 #   (Overlay) sowie /tmp und /var (RAM). Deshalb:
 #     Skripte  -> /usr/local/bin/
+#     Profile  -> /usr/local/bin/profiles/
 #     Web-UI   -> /usr/local/www/  (eigene uhttpd-Instanz, Port 8080)
 #     Konfig   -> /etc/tesvolt_*
 #
@@ -110,9 +111,18 @@ cp "$SRC/usr/bin/ems_watchdog.sh"   "$BIN/" || fail "copy ems_watchdog.sh"
 cp "$SRC/usr/bin/mb_cli.lua"        "$BIN/" || fail "copy mb_cli.lua"
 [ -f "$SRC/usr/bin/github_update.sh" ] && cp "$SRC/usr/bin/github_update.sh" "$BIN/"
 [ -f "$SRC/usr/bin/bluesun_test_guard.sh" ] && cp "$SRC/usr/bin/bluesun_test_guard.sh" "$BIN/"
+[ -f "$SRC/usr/bin/profile_loader.lua" ] && cp "$SRC/usr/bin/profile_loader.lua" "$BIN/"
+[ -f "$SRC/usr/bin/device_poll.lua" ]    && cp "$SRC/usr/bin/device_poll.lua"    "$BIN/"
 cp "$SRC/etc/init.d/ems_watchdog"   /etc/init.d/ || fail "copy init.d/ems_watchdog"
 cp "$SRC"/cgi-bin/*.cgi             "$WEB/cgi-bin/" || fail "copy cgi-bin"
 cp "$SRC"/www/*.html                "$WEB/" || fail "copy www"
+
+# Geraeteprofile (read-only Lua-Tabellen) nach /usr/local/bin/profiles/
+if [ -d "$SRC/profiles" ]; then
+    mkdir -p "$BIN/profiles"
+    cp "$SRC"/profiles/*.lua "$BIN/profiles/" 2>/dev/null
+    log "Geraeteprofile installiert: $(ls "$BIN/profiles" 2>/dev/null | wc -l) Datei(en)"
+fi
 
 # Konfigdateien: NUR anlegen wenn nicht vorhanden (nie ueberschreiben!)
 for f in "$SRC"/etc/tesvolt_*; do
@@ -139,11 +149,25 @@ for base in ip_t ip_b cap_t cap_b proxy_mode split_mode proxy_registers sim prox
         log "WARNUNG: chown uhttpd fehlgeschlagen fuer $f - chmod 666 gesetzt"
     fi
 done
-log "Konfigdatei-Rechte fuer uhttpd-User gesetzt"
+
+# Geraeteslot-Konfigs (Profil-Loader, Slots 1..4)
+for n in 1 2 3 4; do
+    for k in profile ip port unit en; do
+        f="/etc/tesvolt_dev${n}_${k}"
+        [ -f "$f" ] || touch "$f"
+        if chown uhttpd:uhttpd "$f" 2>/dev/null; then
+            chmod 664 "$f"
+        else
+            chmod 666 "$f"
+        fi
+    done
+done
+log "Konfigdatei-Rechte fuer uhttpd-User gesetzt (inkl. Geraeteslots dev1-dev4)"
 
 # --- 4. Rechte ---------------------------------------------------------------
 chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua "$BIN"/mb_cli.lua \
          "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh "$BIN"/bluesun_test_guard.sh \
+         "$BIN"/profile_loader.lua "$BIN"/device_poll.lua \
          /etc/init.d/ems_watchdog "$WEB"/cgi-bin/*.cgi 2>/dev/null
 
 # --- 5. uhttpd-Instanz fuer die Web-UI (Port 8080) ---------------------------
