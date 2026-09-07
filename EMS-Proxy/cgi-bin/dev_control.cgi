@@ -1,9 +1,11 @@
 #!/usr/bin/lua
 -- =====================================================================
 -- dev_control.cgi - MANUELLE Befehle fuer Geraeteslots
---   ?slot=N&cmd=on|off             Einspeisung EIN/AUS (SunSpec Conn)
---   ?slot=N&cmd=limit&pct=0..100   Leistungslimit setzen (WMaxLimPct+Ena)
---   ?slot=N&cmd=nolimit            Leistungslimit aufheben (Ena=0)
+--   ?slot=N&cmd=on|off                Einspeisung EIN/AUS (SunSpec Conn)
+--   ?slot=N&cmd=limit&pct=0..100      Leistungslimit via M123 (WMaxLimPct+Ena)
+--   ?slot=N&cmd=nolimit               Limit M123 aufheben (Ena=0)
+--   ?slot=N&cmd=limit704&pct=0..100   Leistungslimit via M704 (DER AC Controls)
+--   ?slot=N&cmd=nolimit704            Limit M704 aufheben (Ena=0)
 --
 -- SICHERHEIT (Phase 1.5):
 --   * Funktioniert NUR, wenn das Profil einen control-Block mit
@@ -28,6 +30,13 @@
 --   Deshalb wartet dieses CGI bis zu 30 s auf /tmp/emsproxy_polling
 --   (Lock des Pollers), bevor es schreibt. Stale-Locks (>120 s alt)
 --   werden ignoriert. Zusaetzlich: 3 Versuche je Write, 2 s Pause.
+--
+-- M704-ALTERNATIVE (Learning 2026-09-07):
+--   M123-Writes wurden vom NX3 kommentarlos verworfen (Timeout ohne
+--   Antwort trotz freiem Bus). Manche NX3-Firmwares akzeptieren nur
+--   die neueren 7xx-Modelle -> cmd=limit704 nutzt Modell 704
+--   (WMaxLimPctEna=+12, WMaxLimPct=+13, RvrtTms +16 = 300 s).
+--   WSet/WSetPct in M704 sind lt. KACO-Doku unimpl.
 --
 -- HINWEIS KACO NX3: Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet
 -- haben, sonst EXC:2/3 oder Quittung ohne Wirkung. RvtTms=300s:
@@ -58,12 +67,14 @@ end
 
 local qs = os.getenv("QUERY_STRING") or ""
 local slot = tonumber(qs:match("slot=(%d)"))
-local cmd  = qs:match("cmd=(%a+)")
+local cmd  = qs:match("cmd=(%w+)")   -- %w+: limit704 enthaelt Ziffern!
 local pct  = tonumber(qs:match("pct=(%d+)") or "")
 
+local VALID = { on = 1, off = 1, limit = 1, nolimit = 1,
+                limit704 = 1, nolimit704 = 1 }
 if not slot or slot < 1 or slot > 4 then out("FEHLER:slot=1..4 fehlt") end
-if cmd ~= "on" and cmd ~= "off" and cmd ~= "limit" and cmd ~= "nolimit" then
-  out("FEHLER:cmd=on|off|limit|nolimit fehlt")
+if not (cmd and VALID[cmd]) then
+  out("FEHLER:cmd=on|off|limit|nolimit|limit704|nolimit704 fehlt")
 end
 
 -- ---------- Slot-Konfig + Profil -------------------------------------------
@@ -248,19 +259,24 @@ if cmd == "on" or cmd == "off" then
   end
 end
 
--- cmd == "limit" oder "nolimit"
-local lp = ctl.limit
-if not lp then out("FEHLER:Profil hat keinen limit-Punkt") end
+-- cmd == "limit"/"nolimit" (M123) oder "limit704"/"nolimit704" (M704)
+local is704 = (cmd == "limit704" or cmd == "nolimit704")
+local lname = is704 and "limit704" or "limit"
+local lp = is704 and ctl.limit704 or ctl.limit
+if not lp then out("FEHLER:Profil hat keinen " .. lname .. "-Punkt") end
+
+local pct_name = is704 and "WMaxLimPct(704)" or "WMaxLimPct"
+local ena_name = is704 and "WMaxLimPctEna(704)" or "WMaxLim_Ena"
 
 local pct_addr, perr1 = model_addr(lp.model, lp.pct_offset)
 if not pct_addr then out(perr1) end
 local ena_addr, perr2 = model_addr(lp.model, lp.ena_offset)
 if not ena_addr then out(perr2) end
 
-if cmd == "nolimit" then
+if cmd == "nolimit" or cmd == "nolimit704" then
   logline("BEFEHL slot=" .. slot .. " profil=" .. pname .. " ip=" .. ip ..
-          " unit=" .. unit .. " cmd=nolimit")
-  local txt, verified = write_verify(ena_addr, 0, "WMaxLim_Ena")
+          " unit=" .. unit .. " cmd=" .. cmd)
+  local txt, verified = write_verify(ena_addr, 0, ena_name)
   request_poll()
   if verified then
     out("OK - Limit aufgehoben. " .. txt)
@@ -269,7 +285,7 @@ if cmd == "nolimit" then
   end
 end
 
--- cmd == "limit": erst Prozentwert, dann Enable
+-- cmd == "limit"/"limit704": erst Prozentwert, dann Enable
 if not pct then out("FEHLER:pct=0..100 fehlt") end
 local pmin = lp.pct_min or 0
 local pmax = lp.pct_max or 100
@@ -279,15 +295,15 @@ end
 local raw = math.floor(pct * (lp.pct_scale or 100) + 0.5)
 
 logline("BEFEHL slot=" .. slot .. " profil=" .. pname .. " ip=" .. ip ..
-        " unit=" .. unit .. " cmd=limit pct=" .. pct)
+        " unit=" .. unit .. " cmd=" .. cmd .. " pct=" .. pct)
 
-local txt1, ver1 = write_verify(pct_addr, raw, "WMaxLimPct")
+local txt1, ver1 = write_verify(pct_addr, raw, pct_name)
 L.sleep(1)
-local txt2, ver2 = write_verify(ena_addr, 1, "WMaxLim_Ena")
+local txt2, ver2 = write_verify(ena_addr, 1, ena_name)
 request_poll()
 
 if ver1 and ver2 then
-  out("OK - Limit " .. pct .. "% aktiv. " .. txt1 .. " | " .. txt2 ..
+  out("OK - Limit " .. pct .. "% aktiv (" .. lname .. "). " .. txt1 .. " | " .. txt2 ..
       " | ACHTUNG: Rueckfallzeit 300 s moeglich.")
 else
   out("WARNUNG - " .. txt1 .. " | " .. txt2)
