@@ -22,6 +22,13 @@
 --        Ist-Wert mit ausgeben - "OK" heisst sonst nur, dass der WR
 --        die Anfrage quittiert hat, NICHT dass er den Wert uebernahm!
 --
+-- KOLLISIONSSCHUTZ (Learning 2026-09-07, "ERR:timeout header"):
+--   Der Kaco NX3 vertraegt KEINE parallelen TCP-Verbindungen. Der
+--   Watchdog-Poll (device_poll.lua) liest sekundenlang Modell-Bloecke.
+--   Deshalb wartet dieses CGI bis zu 30 s auf /tmp/emsproxy_polling
+--   (Lock des Pollers), bevor es schreibt. Stale-Locks (>120 s alt)
+--   werden ignoriert. Zusaetzlich: 3 Versuche je Write, 2 s Pause.
+--
 -- HINWEIS KACO NX3: Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet
 -- haben, sonst EXC:2/3 oder Quittung ohne Wirkung. RvtTms=300s:
 -- der WR kann Befehle nach der Rueckfallzeit selbststaendig aufheben.
@@ -80,6 +87,29 @@ local ip = cfg("ip")
 if not ip then out("FEHLER:Slot " .. slot .. " hat keine IP") end
 local port = tonumber(cfg("port") or "") or prof.port or 502
 local unit = tonumber(cfg("unit") or "") or prof.unit_id or 1
+
+-- ---------- Auf laufenden Watchdog-Poll warten (NX3: keine Parallelitaet!) ---
+
+local function poll_lock_active()
+  local f = io.open("/tmp/emsproxy_polling", "r")
+  if not f then return false end
+  local ts = tonumber(f:read("*l") or "")
+  f:close()
+  if not ts then return false end
+  return (os.time() - ts) < 120  -- stale Locks ignorieren
+end
+
+local waited = 0
+while poll_lock_active() and waited < 30 do
+  L.sleep(1)
+  waited = waited + 1
+end
+if waited > 0 then
+  logline("Poll-Lock: " .. waited .. " s auf Poller gewartet")
+end
+if poll_lock_active() then
+  out("FEHLER:Watchdog-Poll laeuft seit >30 s - bitte gleich nochmal versuchen")
+end
 
 -- ---------- Zieladressen: Scan-Cache oder eigener Scan -----------------------
 
@@ -142,29 +172,29 @@ local function write_reg_fc(w_addr, w_val, fc)
   return true
 end
 
--- FC6 mit 2 Versuchen; bei EXC:1 (illegal function) Fallback auf FC16.
+-- FC6 mit 3 Versuchen (2 s Pause); bei EXC:1 sofort Fallback auf FC16.
 -- Rueckgabe: true, benutzter_fc  ODER  nil, fehler
 local function write_retry(w_addr, w_val)
   local wok, werr
-  for t = 1, 2 do
+  for t = 1, 3 do
     wok, werr = write_reg_fc(w_addr, w_val, 6)
     if wok then return true, 6 end
     if tostring(werr) == "EXC:1" then break end -- FC6 nicht unterstuetzt
-    L.sleep(1)
+    L.sleep(2)
   end
   logline("FC6 fehlgeschlagen (" .. tostring(werr) .. ") - versuche FC16")
-  for t = 1, 2 do
+  for t = 1, 3 do
     wok, werr = write_reg_fc(w_addr, w_val, 16)
     if wok then return true, 16 end
-    L.sleep(1)
+    L.sleep(2)
   end
   return nil, werr
 end
 
 -- Kontroll-Ruecklesen: liefert Ist-Wert oder nil
 local function read_back(w_addr)
-  L.sleep(0.5)
-  local w = L.read_regs_retry(ip, port, unit, 3, w_addr, 1, 5, 2, 0.5)
+  L.sleep(1)
+  local w = L.read_regs_retry(ip, port, unit, 3, w_addr, 1, 5, 3, 1)
   return w and w[1] or nil
 end
 
@@ -252,7 +282,7 @@ logline("BEFEHL slot=" .. slot .. " profil=" .. pname .. " ip=" .. ip ..
         " unit=" .. unit .. " cmd=limit pct=" .. pct)
 
 local txt1, ver1 = write_verify(pct_addr, raw, "WMaxLimPct")
-L.sleep(0.5)
+L.sleep(1)
 local txt2, ver2 = write_verify(ena_addr, 1, "WMaxLim_Ena")
 request_poll()
 
