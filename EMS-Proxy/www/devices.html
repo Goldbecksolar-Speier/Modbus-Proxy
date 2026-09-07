@@ -173,9 +173,14 @@ var REG_MAP = {
     p_sum: "19026 FC03 f32be"
   },
   kaco_nx3_sunspec: {
-    ac_power: "M103+12 s16 (SF +13)",
-    ac_freq:  "M103+14 u16 (SF +15)",
-    status:   "M103+36 u16"
+    ac_power:   "M103+12 s16 (SF +13)",
+    ac_freq:    "M103+14 u16 (SF +15)",
+    status:     "M103+36 u16 (4=MPPT,7=Fault,8=Standby)",
+    ac_current: "M103+0 u16 (SF +4)",
+    u_l1n:      "M103+8 u16 (SF +11)",
+    cos_phi:    "M103+20 s16 (SF +21)",
+    energy_kwh: "M103+22 u32be (SF +24) x0.001",
+    temp_c:     "M103+31 s16 (SF +35)"
   }
 };
 
