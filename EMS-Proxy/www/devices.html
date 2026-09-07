@@ -38,7 +38,9 @@
              padding: 6px 18px; font-weight: bold; cursor: pointer; }
   .btn-lim { background: #d17f2e; color: #fff; border: 0; border-radius: 5px;
              padding: 6px 14px; font-weight: bold; cursor: pointer; }
-  .btn-on:disabled, .btn-off:disabled, .btn-lim:disabled { background: #aaa; cursor: default; }
+  .btn-lim2 { background: #7a5ea8; color: #fff; border: 0; border-radius: 5px;
+              padding: 6px 14px; font-weight: bold; cursor: pointer; }
+  .btn-on:disabled, .btn-off:disabled, .btn-lim:disabled, .btn-lim2:disabled { background: #aaa; cursor: default; }
   input.pct { width: 50px; text-align: right; }
 </style>
 </head>
@@ -98,8 +100,10 @@ function buildSlots() {
       "<button class='btn-off' id='coff" + n + "'>AUS</button> " +
       "&nbsp;|&nbsp; Leistungslimit: " +
       "<input type='text' class='pct' id='pct" + n + "' placeholder='100'> % " +
-      "<button class='btn-lim' id='clim" + n + "'>Limit setzen</button> " +
-      "<button class='btn-lim' id='cnolim" + n + "'>Limit aufheben</button> " +
+      "<button class='btn-lim' id='clim" + n + "'>Limit (M123)</button> " +
+      "<button class='btn-lim' id='cnolim" + n + "'>M123 aufheben</button> " +
+      "<button class='btn-lim2' id='clim704" + n + "'>Limit (M704)</button> " +
+      "<button class='btn-lim2' id='cnolim704" + n + "'>M704 aufheben</button> " +
       "<span id='cmsg" + n + "'></span></div>" +
       "<table id='tbl" + n + "'><tbody></tbody></table>" +
       "</div>";
@@ -110,23 +114,24 @@ function buildSlots() {
       el("save" + n).addEventListener("click", function () { saveSlot(n); });
       el("con" + n).addEventListener("click", function () { sendCtl(n, "on"); });
       el("coff" + n).addEventListener("click", function () { sendCtl(n, "off"); });
-      el("clim" + n).addEventListener("click", function () { sendLimit(n); });
+      el("clim" + n).addEventListener("click", function () { sendLimit(n, false); });
       el("cnolim" + n).addEventListener("click", function () { sendCtl(n, "nolimit"); });
+      el("clim704" + n).addEventListener("click", function () { sendLimit(n, true); });
+      el("cnolim704" + n).addEventListener("click", function () { sendCtl(n, "nolimit704"); });
     })(m);
   }
 }
 
+var CTL_BTNS = ["con", "coff", "clim", "cnolim", "clim704", "cnolim704"];
+
 function setCtlBusy(n, busy) {
-  el("con" + n).disabled = busy;
-  el("coff" + n).disabled = busy;
-  el("clim" + n).disabled = busy;
-  el("cnolim" + n).disabled = busy;
+  CTL_BTNS.forEach(function (b) { el(b + n).disabled = busy; });
 }
 
 function ctlFetch(n, query, confirmTxt) {
   if (!confirm(confirmTxt)) return;
   var m = el("cmsg" + n);
-  m.innerText = "sende ...";
+  m.innerText = "sende ... (kann bis 60 s dauern: wartet auf freien Bus)";
   m.style.color = "#555";
   setCtlBusy(n, true);
   fetch("/cgi-bin/dev_control.cgi?slot=" + n + "&" + query)
@@ -145,13 +150,14 @@ function ctlFetch(n, query, confirmTxt) {
 
 function sendCtl(n, cmd) {
   var txt;
-  if (cmd === "off")          txt = "Wechselrichter in Slot " + n + " wirklich AUSSCHALTEN (Einspeisung trennen)?";
-  else if (cmd === "on")      txt = "Wechselrichter in Slot " + n + " EINSCHALTEN (Einspeisung verbinden)?";
-  else                        txt = "Leistungslimit in Slot " + n + " wirklich AUFHEBEN (wieder 100% erlaubt)?";
+  if (cmd === "off")             txt = "Wechselrichter in Slot " + n + " wirklich AUSSCHALTEN (Einspeisung trennen)?";
+  else if (cmd === "on")         txt = "Wechselrichter in Slot " + n + " EINSCHALTEN (Einspeisung verbinden)?";
+  else if (cmd === "nolimit704") txt = "Leistungslimit (Modell 704) in Slot " + n + " wirklich AUFHEBEN?";
+  else                           txt = "Leistungslimit (Modell 123) in Slot " + n + " wirklich AUFHEBEN (wieder 100% erlaubt)?";
   ctlFetch(n, "cmd=" + cmd, txt);
 }
 
-function sendLimit(n) {
+function sendLimit(n, via704) {
   var pct = parseInt(el("pct" + n).value, 10);
   if (isNaN(pct) || pct < 0 || pct > 100) {
     var m = el("cmsg" + n);
@@ -159,8 +165,10 @@ function sendLimit(n) {
     m.style.color = "#c00";
     return;
   }
-  ctlFetch(n, "cmd=limit&pct=" + pct,
-    "Wechselrichter in Slot " + n + " wirklich auf " + pct + "% Leistung begrenzen?");
+  var cmd = via704 ? "limit704" : "limit";
+  var weg = via704 ? "Modell 704" : "Modell 123";
+  ctlFetch(n, "cmd=" + cmd + "&pct=" + pct,
+    "Wechselrichter in Slot " + n + " wirklich auf " + pct + "% Leistung begrenzen (" + weg + ")?");
 }
 
 function loadCfg(n) {
@@ -261,6 +269,8 @@ var REG_MAP = {
     temp_c:      "M103+31 s16 (SF +35)",
     lim_pct:     "M123+3 u16 WMaxLimPct (SF +21)",
     lim_ena:     "M123+7 u16 WMaxLim_Ena (1=aktiv)",
+    lim704_pct:  "M704+13 u16 WMaxLimPct (SF +52)",
+    lim704_ena:  "M704+12 u16 WMaxLimPctEna (1=aktiv)",
     dc1_current: "M160+17 u16 (SF +0)",
     dc1_voltage: "M160+18 u16 (SF +1)",
     dc1_power:   "M160+19 s16 (SF +2)",
