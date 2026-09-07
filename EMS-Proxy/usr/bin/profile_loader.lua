@@ -20,6 +20,11 @@
 --     Echtwert = Rohwert * 10^SF; SF ist statisch -> sf_cache
 --   * NOT-IMPLEMENTED-Sentinels je Typ -> Wert verwerfen ("NA:")
 --
+-- ROBUSTHEIT (Learning Kaco NX3, 2026-09-07):
+--   Der NX3 beantwortet schnell aufeinanderfolgende TCP-Verbindungen
+--   teils mit Timeout. Der Modell-Scan nutzt deshalb 5 s Timeout,
+--   bis zu 3 Versuche pro Header-Read und kurze Pausen dazwischen.
+--
 -- STRIKT READ-ONLY: dieses Modul enthaelt KEINE Schreibfunktion.
 -- =====================================================================
 
@@ -72,6 +77,21 @@ function M.read_regs(ip, port, unit, fc, addr, count, timeout)
     words[i] = body:byte(2 * i + 1) * 256 + body:byte(2 * i + 2)
   end
   return words
+end
+
+-- Wie read_regs, aber mit Wiederholversuchen (fuer zickige Geraete
+-- wie den Kaco NX3, der schnelle Verbindungsfolgen mit Timeout quittiert)
+function M.read_regs_retry(ip, port, unit, fc, addr, count, timeout, tries, pause)
+  tries = tries or 3
+  pause = pause or 0.5
+  local last
+  for t = 1, tries do
+    local w, e = M.read_regs(ip, port, unit, fc, addr, count, timeout)
+    if w then return w end
+    last = e
+    if t < tries then M.sleep(pause) end
+  end
+  return nil, last
 end
 
 -- ---------- Dekodierung ---------------------------------------------------
@@ -143,16 +163,23 @@ end
 -- ---------- SunSpec Model Scan ---------------------------------------------
 
 -- Ergebnis: { base = <addr>, models = { [id] = {data_start=, len=} } }
+-- Robust: 5 s Timeout, 3 Versuche pro Read, Pausen zwischen den Reads
+-- (Kaco NX3 laesst nur langsame Verbindungsfolgen zu). Bricht die Kette
+-- mitten drin ab, wird ein ECHTER Fehler gemeldet statt einer leeren Liste.
 function M.sunspec_scan(ip, port, unit, cfg)
   local bases = (cfg and cfg.base_candidates) or { 40000, 0, 50000 }
   local end_id = (cfg and cfg.end_model_id) or 0xFFFF
+  local tmo = (cfg and cfg.scan_timeout) or 5
   for _, base in ipairs(bases) do
-    local w = M.read_regs(ip, port, unit, 3, base, 2)
+    local w = M.read_regs_retry(ip, port, unit, 3, base, 2, tmo, 2, 0.5)
     if w and w[1] == 0x5375 and w[2] == 0x6E53 then -- "Su" "nS"
       local models, addr = {}, base + 2
       for _ = 1, 60 do -- Schutz gegen Endlos-Kette
-        local h = M.read_regs(ip, port, unit, 3, addr, 2)
-        if not h then break end
+        M.sleep(0.3)
+        local h, herr = M.read_regs_retry(ip, port, unit, 3, addr, 2, tmo, 3, 0.5)
+        if not h then
+          return nil, "ERR:Scan-Abbruch bei addr=" .. addr .. " (" .. tostring(herr) .. ")"
+        end
         if h[1] == end_id then break end
         models[h[1]] = { data_start = addr + 2, len = h[2] }
         addr = addr + 2 + h[2]
@@ -182,7 +209,7 @@ function M.read_point(dev, prof, p, scan, sf_cache)
   local fc = p.fc or 3
   -- 2. Rohwert lesen
   local n = M.word_count(p.type)
-  local words, err = M.read_regs(dev.ip, dev.port, dev.unit, fc, addr, n)
+  local words, err = M.read_regs_retry(dev.ip, dev.port, dev.unit, fc, addr, n, 3, 2, 0.3)
   if not words then return nil, err end
   if M.is_not_impl(words, p.type, p.not_impl) then
     return nil, "NA:not implemented"
@@ -198,7 +225,7 @@ function M.read_point(dev, prof, p, scan, sf_cache)
   if sf_addr then
     local sfv = sf_cache[sf_addr]
     if sfv == nil then
-      local sw, serr = M.read_regs(dev.ip, dev.port, dev.unit, fc, sf_addr, 1)
+      local sw, serr = M.read_regs_retry(dev.ip, dev.port, dev.unit, fc, sf_addr, 1, 3, 2, 0.3)
       if not sw then return nil, serr end
       sfv = sw[1]
       sf_cache[sf_addr] = sfv
@@ -211,7 +238,7 @@ function M.read_point(dev, prof, p, scan, sf_cache)
   -- 5. Richtungsregister (z.B. Solis 33135: 0=Laden, 1=Entladen)
   --    Proxy-Konvention: >0 = Entladen
   if p.dir_reg then
-    local dw, derr = M.read_regs(dev.ip, dev.port, dev.unit, fc, p.dir_reg, 1)
+    local dw, derr = M.read_regs_retry(dev.ip, dev.port, dev.unit, fc, p.dir_reg, 1, 3, 2, 0.3)
     if not dw then return nil, derr end
     local mag = math.abs(v)
     if dw[1] == (p.dir_discharge or 1) then v = mag else v = -mag end
