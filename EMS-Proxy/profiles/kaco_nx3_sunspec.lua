@@ -9,8 +9,15 @@
 --       W=40084, W_SF=40085(=1), Hz=40086, Hz_SF=40087(=-2), St=40108;
 --       Device Address = 3; Schreibzugriff muss am WR separat
 --       freigeschaltet werden (MODBUS/SunSpec-Menue), sonst read-only.
---    -> NICHT implementiert lt. Doku: DCA/DCV/DCW (DC-Werte), TmpSnk,
---       TmpTrns, TmpOt (nur TmpCab vorhanden).
+--    -> NICHT implementiert lt. Doku in M103: DCA/DCV/DCW (DC-Werte),
+--       TmpSnk, TmpTrns, TmpOt (nur TmpCab vorhanden).
+--    -> DC-WERTE KOMMEN AUS MODELL 160 (Multiple MPPT Extension):
+--       M160-ID an 40208, Laenge 48, Daten ab 40210, N=2 Module.
+--       SF datenrelativ: DCA_SF=+0(=-2), DCV_SF=+1(=-1), DCW_SF=+2(=+1).
+--       Modul-Block je 20 Register ab +8:
+--         String 1: DCA=+17 DCV=+18 DCW=+19
+--         String 2: DCA=+37 DCV=+38 DCW=+39
+--       DCWH/Tms/Tmp/DCSt/DCEvt in M160 = unimpl -> weggelassen.
 --  * SunSpec Device Information Model Specification v1.2.1
 --
 -- SCAN-ERGEBNIS AM GERAET (2026-09-07, 192.168.20.171:502 unit 3):
@@ -29,9 +36,11 @@
 --
 -- OFFSET-KONVENTION: offset zaehlt ab DATENBEGINN des Modells
 -- (data_start = Header-Adresse + 2, also NACH ID+Laenge).
--- Modell 103 datenrelativ: A=0 AphA=1 A_SF=4 PPVphAB=5 PhVphA=8 V_SF=11
---   W=12 W_SF=13 Hz=14 Hz_SF=15 VA=16 VAr=18 PF=20 PF_SF=21
---   WH=22(u32) WH_SF=24 TmpCab=31 Tmp_SF=35 St=36
+-- Modell 103 datenrelativ: A=0 AphA=1 A_SF=4 PPVphAB=5 PPVphBC=6
+--   PPVphCA=7 PhVphA=8 V_SF=11 W=12 W_SF=13 Hz=14 Hz_SF=15 VA=16
+--   VAr=18 PF=20 PF_SF=21 WH=22(u32) WH_SF=24 TmpCab=31 Tmp_SF=35 St=36
+-- Modell 160 datenrelativ: DCA_SF=0 DCV_SF=1 DCW_SF=2 N=6
+--   Modul1: DCA=17 DCV=18 DCW=19 / Modul2: DCA=37 DCV=38 DCW=39
 --
 -- SunSpec-Regeln (Spec v1.2.1):
 --  * "SunS"-Marker (0x53756E53) an Adresse 0, 40000 ODER 50000.
@@ -71,7 +80,7 @@ return {
   -- Messpunkte MODELL-RELATIV: model = SunSpec-Modell-ID,
   -- offset = Register-Offset ab Modell-DATENBEGINN (nach ID+Laenge).
   -- Absolutadresse = ScanErgebnis(model).data_start + offset.
-  -- device_poll liest Modell 103 als EINEN Block und dekodiert daraus.
+  -- device_poll liest je benoetigtem Modell (103 + 160) EINEN Block.
   read = {
     -- Kernpunkte: W(12) W_SF(13) Hz(14) Hz_SF(15) St(36)
     ac_power   = { model = 103, offset = 12, fc = 3, type = "s16", unit = "W",
@@ -85,24 +94,52 @@ return {
                    sf_offset = 4, not_impl = 0xFFFF },   -- A gesamt
     u_l1n      = { model = 103, offset = 8,  fc = 3, type = "u16", unit = "V",
                    sf_offset = 11, not_impl = 0xFFFF },  -- PhVphA
+    u_l12      = { model = 103, offset = 5,  fc = 3, type = "u16", unit = "V",
+                   sf_offset = 11, not_impl = 0xFFFF },  -- PPVphAB (L1-L2)
+    u_l23      = { model = 103, offset = 6,  fc = 3, type = "u16", unit = "V",
+                   sf_offset = 11, not_impl = 0xFFFF },  -- PPVphBC (L2-L3)
+    u_l31      = { model = 103, offset = 7,  fc = 3, type = "u16", unit = "V",
+                   sf_offset = 11, not_impl = 0xFFFF },  -- PPVphCA (L3-L1)
     cos_phi    = { model = 103, offset = 20, fc = 3, type = "s16", unit = "",
                    sf_offset = 21, not_impl = 0x8000 },  -- PF (0..1)
     energy_kwh = { model = 103, offset = 22, fc = 3, type = "u32be", unit = "kWh",
                    sf_offset = 24, scale = 0.001 },      -- WH acc32 -> kWh
     temp_c     = { model = 103, offset = 31, fc = 3, type = "s16", unit = "C",
                    sf_offset = 35, not_impl = 0x8000 },  -- TmpCab
+    -- DC-Werte aus Modell 160 (MPPT, 2 Strings) - eigener Block-Read:
+    dc1_current = { model = 160, offset = 17, fc = 3, type = "u16", unit = "A",
+                    sf_offset = 0, not_impl = 0xFFFF },  -- Modul1 DCA (SF=-2)
+    dc1_voltage = { model = 160, offset = 18, fc = 3, type = "u16", unit = "V",
+                    sf_offset = 1, not_impl = 0xFFFF },  -- Modul1 DCV (SF=-1)
+    dc1_power   = { model = 160, offset = 19, fc = 3, type = "s16", unit = "W",
+                    sf_offset = 2, not_impl = 0x8000 },  -- Modul1 DCW (SF=+1)
+    dc2_current = { model = 160, offset = 37, fc = 3, type = "u16", unit = "A",
+                    sf_offset = 0, not_impl = 0xFFFF },  -- Modul2 DCA
+    dc2_voltage = { model = 160, offset = 38, fc = 3, type = "u16", unit = "V",
+                    sf_offset = 1, not_impl = 0xFFFF },  -- Modul2 DCV
+    dc2_power   = { model = 160, offset = 39, fc = 3, type = "s16", unit = "W",
+                    sf_offset = 2, not_impl = 0x8000 },  -- Modul2 DCW
   },
 
   ui = {
     plaus = {
-      ac_power   = { -1000, 12000 },
-      ac_freq    = { 45, 55 },
-      status     = { 1, 8 },
-      ac_current = { 0, 30 },
-      u_l1n      = { 150, 280 },
-      cos_phi    = { -1, 1 },
-      energy_kwh = { 0, 100000000 },
-      temp_c     = { -25, 100 },
+      ac_power    = { -1000, 12000 },
+      ac_freq     = { 45, 55 },
+      status      = { 1, 8 },
+      ac_current  = { 0, 30 },
+      u_l1n       = { 150, 280 },
+      u_l12       = { 300, 480 },
+      u_l23       = { 300, 480 },
+      u_l31       = { 300, 480 },
+      cos_phi     = { -1, 1 },
+      energy_kwh  = { 0, 100000000 },
+      temp_c      = { -25, 100 },
+      dc1_current = { 0, 30 },
+      dc1_voltage = { 0, 1100 },
+      dc1_power   = { -100, 8000 },
+      dc2_current = { 0, 30 },
+      dc2_voltage = { 0, 1100 },
+      dc2_power   = { -100, 8000 },
     },
   },
 
