@@ -31,6 +31,12 @@
   .stale { color: #c00; font-weight: bold; }
   #globmsg { margin-left: 10px; font-weight: bold; }
   small.hint { color: #666; }
+  .ctl { padding: 6px 0; }
+  .btn-on  { background: #1a7a2e; color: #fff; border: 0; border-radius: 5px;
+             padding: 6px 18px; font-weight: bold; cursor: pointer; }
+  .btn-off { background: #c0392b; color: #fff; border: 0; border-radius: 5px;
+             padding: 6px 18px; font-weight: bold; cursor: pointer; }
+  .btn-on:disabled, .btn-off:disabled { background: #aaa; cursor: default; }
 </style>
 </head>
 <body>
@@ -60,6 +66,10 @@ var NSLOTS = 4;
 var KNOWN_PROFILES = ["", "solis_s6_hybrid", "kaco_nx3_sunspec", "janitza_umg604",
                       "tesvolt_bat", "bluesun_udan"];
 
+// Profile mit manuellem EIN/AUS (control-Block + dev_control.cgi).
+// ACHTUNG: Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet haben!
+var CONTROL_PROFILES = { kaco_nx3_sunspec: 1 };
+
 function el(id) { return document.getElementById(id); }
 
 function buildSlots() {
@@ -79,6 +89,11 @@ function buildSlots() {
       "Unit: <input type='text' class='num' id='unit" + n + "' placeholder='1'> " +
       "<label><input type='checkbox' id='en" + n + "'> aktiv</label> " +
       "<button id='save" + n + "'>Speichern</button> <span id='msg" + n + "'></span></div>" +
+      "<div class='cfg-row ctl' id='ctl" + n + "' style='display:none'>" +
+      "Wechselrichter-Einspeisung: " +
+      "<button class='btn-on' id='con" + n + "'>EIN</button> " +
+      "<button class='btn-off' id='coff" + n + "'>AUS</button> " +
+      "<span id='cmsg" + n + "'></span></div>" +
       "<table id='tbl" + n + "'><tbody></tbody></table>" +
       "</div>";
   }
@@ -86,8 +101,37 @@ function buildSlots() {
   for (var m = 1; m <= NSLOTS; m++) {
     (function (n) {
       el("save" + n).addEventListener("click", function () { saveSlot(n); });
+      el("con" + n).addEventListener("click", function () { sendCtl(n, "on"); });
+      el("coff" + n).addEventListener("click", function () { sendCtl(n, "off"); });
     })(m);
   }
+}
+
+function sendCtl(n, cmd) {
+  var txt = (cmd === "off")
+    ? "Wechselrichter in Slot " + n + " wirklich AUSSCHALTEN (Einspeisung trennen)?"
+    : "Wechselrichter in Slot " + n + " EINSCHALTEN (Einspeisung verbinden)?";
+  if (!confirm(txt)) return;
+  var m = el("cmsg" + n);
+  m.innerText = "sende ...";
+  m.style.color = "#555";
+  el("con" + n).disabled = true;
+  el("coff" + n).disabled = true;
+  fetch("/cgi-bin/dev_control.cgi?slot=" + n + "&cmd=" + cmd)
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      t = t.trim();
+      m.innerText = t;
+      m.style.color = (t.indexOf("OK") === 0) ? "#080" : "#c00";
+    })
+    .catch(function () {
+      m.innerText = "HTTP-Fehler!";
+      m.style.color = "#c00";
+    })
+    .then(function () {
+      el("con" + n).disabled = false;
+      el("coff" + n).disabled = false;
+    });
 }
 
 function loadCfg(n) {
@@ -101,6 +145,7 @@ function loadCfg(n) {
         if (k === "profile") {
           if (KNOWN_PROFILES.indexOf(v) >= 0) { el("psel" + n).value = v; el("pfree" + n).value = ""; }
           else { el("psel" + n).value = ""; el("pfree" + n).value = v; }
+          el("ctl" + n).style.display = CONTROL_PROFILES[v] ? "" : "none";
         }
         if (k === "ip")   el("ip" + n).value = v;
         if (k === "port") el("port" + n).value = v;
@@ -126,6 +171,7 @@ function saveSlot(n) {
       if (t.indexOf("OK") === 0) {
         m.innerText = "Gespeichert - Poll angefordert.";
         m.style.color = "#080";
+        el("ctl" + n).style.display = CONTROL_PROFILES[profile] ? "" : "none";
       } else {
         m.innerText = t.trim();
         m.style.color = "#c00";
