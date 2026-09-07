@@ -8,24 +8,23 @@
 -- SICHERHEIT (Phase 1.5):
 --   * Funktioniert NUR, wenn das Profil einen control-Block mit
 --     manual_only=true hat (z.B. kaco_nx3_sunspec).
---   * Schreibt nur die im control-Block definierten Einzelregister
---     per FC6 - sonst nichts.
+--   * Schreibt nur die im control-Block definierten Einzelregister -
+--     sonst nichts.
 --   * Wird ausschliesslich per Button (devices.html) mit
 --     Bestaetigungsdialog aufgerufen - niemals automatisch.
 --   * Jeder Versuch wird nach /tmp/ems_control.log protokolliert.
 --
--- ABLAUF:
---   1. Slot-Konfig lesen (/etc/tesvolt_devN_*)
---   2. Profil laden, control-Block pruefen
---   3. Modell-Adresse aus Scan-Cache (/tmp/emsproxy_devN_scan) holen;
---      wenn kein Cache: eigener SunSpec-Scan
---   4. FC6-Write(s), je 2 Versuche
---   5. Ergebnis als Klartext (OK ... / FEHLER:...)
+-- WRITE-STRATEGIE (Learning 2026-09-07):
+--   Viele SunSpec-Geraete akzeptieren nur FC16 (Write Multiple),
+--   nicht FC6 (Write Single) - oder umgekehrt. Deshalb:
+--     1. FC6 versuchen; bei EXC:1 (illegal function) -> FC16
+--     2. Nach erfolgreichem Write das Register RUECKLESEN und den
+--        Ist-Wert mit ausgeben - "OK" heisst sonst nur, dass der WR
+--        die Anfrage quittiert hat, NICHT dass er den Wert uebernahm!
 --
 -- HINWEIS KACO NX3: Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet
--- haben, sonst antwortet er mit EXC:1 (illegal function) oder EXC:2/3.
--- RvtTms=300s: der WR kann Befehle nach der Rueckfallzeit
--- selbststaendig aufheben (gilt fuer Conn UND WMaxLimPct).
+-- haben, sonst EXC:2/3 oder Quittung ohne Wirkung. RvtTms=300s:
+-- der WR kann Befehle nach der Rueckfallzeit selbststaendig aufheben.
 -- =====================================================================
 
 print("Content-Type: text/plain")
@@ -113,17 +112,24 @@ local function model_addr(model, offset)
   return scan.models[model].data_start + (offset or 0)
 end
 
--- ---------- FC6 Write Single Register ---------------------------------------
+-- ---------- Modbus Write (FC6, Fallback FC16) --------------------------------
 
-local function write_reg(w_addr, w_val)
+local function hi(v) return math.floor(v / 256) % 256 end
+local function lo(v) return v % 256 end
+
+-- Ein Register schreiben. fc = 6 oder 16.
+local function write_reg_fc(w_addr, w_val, fc)
   if not ok_socket then return nil, "ERR:luasocket fehlt" end
   local c = socket.tcp()
   c:settimeout(5)
   local ok, err = c:connect(ip, port)
   if not ok then c:close() return nil, "ERR:connect " .. tostring(err) end
-  local function hi(v) return math.floor(v / 256) % 256 end
-  local function lo(v) return v % 256 end
-  local pdu = string.char(6, hi(w_addr), lo(w_addr), hi(w_val), lo(w_val))
+  local pdu
+  if fc == 16 then
+    pdu = string.char(16, hi(w_addr), lo(w_addr), 0, 1, 2, hi(w_val), lo(w_val))
+  else
+    pdu = string.char(6, hi(w_addr), lo(w_addr), hi(w_val), lo(w_val))
+  end
   c:send(string.char(0, 1, 0, 0, 0, #pdu + 1, unit) .. pdu)
   local h = c:receive(7)
   if not h then c:close() return nil, "ERR:timeout header" end
@@ -131,20 +137,35 @@ local function write_reg(w_addr, w_val)
   local body = c:receive(len - 1)
   c:close()
   if not body then return nil, "ERR:timeout body" end
-  if body:byte(1) == 6 + 0x80 then return nil, "EXC:" .. body:byte(2) end
-  if body:byte(1) ~= 6 then return nil, "ERR:bad fc " .. body:byte(1) end
+  if body:byte(1) == fc + 0x80 then return nil, "EXC:" .. body:byte(2) end
+  if body:byte(1) ~= fc then return nil, "ERR:bad fc " .. body:byte(1) end
   return true
 end
 
--- 2 Versuche (NX3 mag keine schnellen Verbindungsfolgen)
+-- FC6 mit 2 Versuchen; bei EXC:1 (illegal function) Fallback auf FC16.
+-- Rueckgabe: true, benutzter_fc  ODER  nil, fehler
 local function write_retry(w_addr, w_val)
   local wok, werr
   for t = 1, 2 do
-    wok, werr = write_reg(w_addr, w_val)
-    if wok then return true end
+    wok, werr = write_reg_fc(w_addr, w_val, 6)
+    if wok then return true, 6 end
+    if tostring(werr) == "EXC:1" then break end -- FC6 nicht unterstuetzt
+    L.sleep(1)
+  end
+  logline("FC6 fehlgeschlagen (" .. tostring(werr) .. ") - versuche FC16")
+  for t = 1, 2 do
+    wok, werr = write_reg_fc(w_addr, w_val, 16)
+    if wok then return true, 16 end
     L.sleep(1)
   end
   return nil, werr
+end
+
+-- Kontroll-Ruecklesen: liefert Ist-Wert oder nil
+local function read_back(w_addr)
+  L.sleep(0.5)
+  local w = L.read_regs_retry(ip, port, unit, 3, w_addr, 1, 5, 2, 0.5)
+  return w and w[1] or nil
 end
 
 local function fail_write(werr)
@@ -159,6 +180,23 @@ local function request_poll()
   if pf then pf:close() end
 end
 
+-- Schreiben + verifizieren; Rueckgabe: Text "geschrieben (FCx), Ruecklesen=Y"
+local function write_verify(w_addr, w_val, name)
+  local wok, fc_or_err = write_retry(w_addr, w_val)
+  if not wok then fail_write(fc_or_err) end
+  local rb = read_back(w_addr)
+  local txt = name .. ": Reg " .. w_addr .. "=" .. w_val .. " (FC" .. fc_or_err .. ")"
+  if rb == nil then
+    txt = txt .. ", Ruecklesen FEHLGESCHLAGEN"
+  elseif rb == w_val then
+    txt = txt .. ", Ruecklesen OK (" .. rb .. ")"
+  else
+    txt = txt .. ", ABER Ruecklesen=" .. rb .. " - WR hat Wert NICHT uebernommen!"
+  end
+  logline(txt)
+  return txt, (rb == w_val)
+end
+
 -- ---------- Befehle ----------------------------------------------------------
 
 if cmd == "on" or cmd == "off" then
@@ -170,12 +208,14 @@ if cmd == "on" or cmd == "off" then
   local value = (cmd == "on") and (cp.on or 1) or (cp.off or 0)
 
   logline("BEFEHL slot=" .. slot .. " profil=" .. pname .. " ip=" .. ip ..
-          " unit=" .. unit .. " cmd=" .. cmd .. " addr=" .. addr .. " val=" .. value)
-  local wok, werr = write_retry(addr, value)
-  if not wok then fail_write(werr) end
+          " unit=" .. unit .. " cmd=" .. cmd)
+  local txt, verified = write_verify(addr, value, "Conn")
   request_poll()
-  out("OK - Befehl '" .. cmd .. "' gesendet (Register " .. addr .. "=" .. value ..
-      "). Status aktualisiert sich nach dem naechsten Poll.")
+  if verified then
+    out("OK - " .. txt)
+  else
+    out("WARNUNG - " .. txt)
+  end
 end
 
 -- cmd == "limit" oder "nolimit"
@@ -189,11 +229,14 @@ if not ena_addr then out(perr2) end
 
 if cmd == "nolimit" then
   logline("BEFEHL slot=" .. slot .. " profil=" .. pname .. " ip=" .. ip ..
-          " unit=" .. unit .. " cmd=nolimit addr=" .. ena_addr .. " val=0")
-  local wok, werr = write_retry(ena_addr, 0)
-  if not wok then fail_write(werr) end
+          " unit=" .. unit .. " cmd=nolimit")
+  local txt, verified = write_verify(ena_addr, 0, "WMaxLim_Ena")
   request_poll()
-  out("OK - Leistungslimit aufgehoben (Register " .. ena_addr .. "=0).")
+  if verified then
+    out("OK - Limit aufgehoben. " .. txt)
+  else
+    out("WARNUNG - " .. txt)
+  end
 end
 
 -- cmd == "limit": erst Prozentwert, dann Enable
@@ -206,17 +249,16 @@ end
 local raw = math.floor(pct * (lp.pct_scale or 100) + 0.5)
 
 logline("BEFEHL slot=" .. slot .. " profil=" .. pname .. " ip=" .. ip ..
-        " unit=" .. unit .. " cmd=limit pct=" .. pct ..
-        " addr_pct=" .. pct_addr .. " raw=" .. raw .. " addr_ena=" .. ena_addr)
+        " unit=" .. unit .. " cmd=limit pct=" .. pct)
 
-local wok, werr = write_retry(pct_addr, raw)
-if not wok then fail_write(werr) end
+local txt1, ver1 = write_verify(pct_addr, raw, "WMaxLimPct")
 L.sleep(0.5)
-wok, werr = write_retry(ena_addr, 1)
-if not wok then
-  logline("WARNUNG: WMaxLimPct geschrieben, aber Enable fehlgeschlagen: " .. tostring(werr))
-  fail_write(werr)
-end
+local txt2, ver2 = write_verify(ena_addr, 1, "WMaxLim_Ena")
 request_poll()
-out("OK - Leistungslimit " .. pct .. "% gesetzt (Reg " .. pct_addr .. "=" .. raw ..
-    ", Reg " .. ena_addr .. "=1). ACHTUNG: Rueckfallzeit 300 s moeglich.")
+
+if ver1 and ver2 then
+  out("OK - Limit " .. pct .. "% aktiv. " .. txt1 .. " | " .. txt2 ..
+      " | ACHTUNG: Rueckfallzeit 300 s moeglich.")
+else
+  out("WARNUNG - " .. txt1 .. " | " .. txt2)
+end
