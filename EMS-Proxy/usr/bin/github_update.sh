@@ -113,6 +113,7 @@ cp "$SRC/usr/bin/mb_cli.lua"        "$BIN/" || fail "copy mb_cli.lua"
 [ -f "$SRC/usr/bin/bluesun_test_guard.sh" ] && cp "$SRC/usr/bin/bluesun_test_guard.sh" "$BIN/"
 [ -f "$SRC/usr/bin/profile_loader.lua" ] && cp "$SRC/usr/bin/profile_loader.lua" "$BIN/"
 [ -f "$SRC/usr/bin/device_poll.lua" ]    && cp "$SRC/usr/bin/device_poll.lua"    "$BIN/"
+[ -f "$SRC/usr/bin/sunspec_diag.lua" ]   && cp "$SRC/usr/bin/sunspec_diag.lua"   "$BIN/"
 cp "$SRC/etc/init.d/ems_watchdog"   /etc/init.d/ || fail "copy init.d/ems_watchdog"
 cp "$SRC"/cgi-bin/*.cgi             "$WEB/cgi-bin/" || fail "copy cgi-bin"
 cp "$SRC"/www/*.html                "$WEB/" || fail "copy www"
@@ -167,7 +168,7 @@ log "Konfigdatei-Rechte fuer uhttpd-User gesetzt (inkl. Geraeteslots dev1-dev4)"
 # --- 4. Rechte ---------------------------------------------------------------
 chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua "$BIN"/mb_cli.lua \
          "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh "$BIN"/bluesun_test_guard.sh \
-         "$BIN"/profile_loader.lua "$BIN"/device_poll.lua \
+         "$BIN"/profile_loader.lua "$BIN"/device_poll.lua "$BIN"/sunspec_diag.lua \
          /etc/init.d/ems_watchdog "$WEB"/cgi-bin/*.cgi 2>/dev/null
 
 # --- 5. uhttpd-Instanz fuer die Web-UI (Port 8080) ---------------------------
