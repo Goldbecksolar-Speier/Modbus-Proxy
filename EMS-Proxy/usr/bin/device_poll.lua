@@ -18,6 +18,16 @@
 -- SunSpec-Scan-Cache: /tmp/emsproxy_devN_scan (RAM; nach Reboot neu)
 --   Cache loeschen erzwingt Neu-Scan (z.B. nach Firmware-Update).
 --
+-- BLOCK-READ (Learning Kaco NX3, 2026-09-07): Bei SunSpec-Profilen
+-- (model+offset-Punkte) wird jedes benoetigte Modell EINMAL als Block
+-- gelesen und alle Punkte daraus dekodiert. Einzelreads lieferten beim
+-- NX3 sporadisch verstuemmelte Werte (Hz=0.01, St=65534); ein Block ist
+-- in sich konsistent.
+--
+-- PLAUSIBILITAET: prof.ui.plaus = { name = {min, max} } - Werte
+-- ausserhalb werden als err_<name>=PLAUS:<wert> verworfen statt
+-- angezeigt.
+--
 -- STRIKT READ-ONLY: schreibt niemals in Geraete. Profile mit
 -- write-Block werden abgewiesen (Phase-1-Sicherheitsregel).
 -- =====================================================================
@@ -70,6 +80,16 @@ local function save_scan_cache(n, scan)
     f:write(mid, "=", m.data_start, ",", m.len, "\n")
   end
   f:close()
+end
+
+-- Plausibilitaet: nil = ok, sonst Fehlertext
+local function plaus_check(prof, pname, v)
+  local pl = prof.ui and prof.ui.plaus and prof.ui.plaus[pname]
+  if not pl or type(v) ~= "number" then return nil end
+  if v < pl[1] or v > pl[2] then
+    return "PLAUS:" .. fmt(v) .. " ausserhalb " .. pl[1] .. ".." .. pl[2]
+  end
+  return nil
 end
 
 -- Rueckgabe: true = Slot belegt (Status geschrieben), nil = Slot leer
@@ -130,18 +150,49 @@ local function poll_slot(n)
   end
 
   local gap = (prof.min_gap_ms or 100) / 1000
-  local sf_cache = {}
   local okc, errc = 0, 0
+
+  -- Modell-Bloecke einmal je Poll lesen (nur fuer model+offset-Punkte)
+  local blocks, block_errs = {}, {}
+  if scan then
+    local need = {}
+    for _, p in pairs(prof.read or {}) do
+      if p.model and not p.addr then need[p.model] = true end
+    end
+    for mid in pairs(need) do
+      local b, be = L.read_model_block(dev.ip, dev.port, dev.unit, scan, mid,
+                                       prof.sunspec and prof.sunspec.scan_timeout or 5)
+      if b then blocks[mid] = b else block_errs[mid] = be end
+      L.sleep(gap)
+    end
+  end
+
+  local sf_cache = {}
   for pname, p in pairs(prof.read or {}) do
-    local v, err = L.read_point(dev, prof, p, scan, sf_cache)
+    local v, err
+    if p.model and not p.addr and blocks[p.model] then
+      -- Block-Pfad: konsistente Daten aus EINEM Read
+      v, err = L.point_from_block(p, blocks[p.model])
+    elseif p.model and not p.addr and block_errs[p.model] then
+      v, err = nil, block_errs[p.model]
+    else
+      -- klassischer Einzelread (Absolutadressen-Profile)
+      v, err = L.read_point(dev, prof, p, scan, sf_cache)
+      L.sleep(gap) -- Herstellervorgabe min_gap_ms einhalten
+    end
     if v ~= nil then
-      lines[#lines + 1] = pname .. "=" .. fmt(v)
-      okc = okc + 1
+      local pe = plaus_check(prof, pname, v)
+      if pe then
+        lines[#lines + 1] = "err_" .. pname .. "=" .. pe
+        errc = errc + 1
+      else
+        lines[#lines + 1] = pname .. "=" .. fmt(v)
+        okc = okc + 1
+      end
     else
       lines[#lines + 1] = "err_" .. pname .. "=" .. (err or "?")
       errc = errc + 1
     end
-    L.sleep(gap) -- Herstellervorgabe min_gap_ms einhalten
   end
   lines[#lines + 1] = "points_ok=" .. okc
   lines[#lines + 1] = "points_err=" .. errc
