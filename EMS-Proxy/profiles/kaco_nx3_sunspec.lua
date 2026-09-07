@@ -1,10 +1,10 @@
 -- =====================================================================
 -- Profil: Kaco blueplanet NX3 10 kW (PV-Wechselrichter)
 -- Standort: Hebauer. Phase 1: Messwerte NUR LESEN - kein write-Block!
--- AUSNAHME: control-Block (unten) = manueller EIN/AUS-Befehl NUR ueber
--- dev_control.cgi (Button mit Bestaetigung). Der Watchdog/Poller
--- schreibt NIEMALS - device_poll weist nur 'write'-Bloecke ab, der
--- 'control'-Block wird dort ignoriert.
+-- AUSNAHME: control-Block (unten) = manuelle Befehle (EIN/AUS, Limit)
+-- NUR ueber dev_control.cgi (Buttons mit Bestaetigung). Der Watchdog/
+-- Poller schreibt NIEMALS - device_poll weist nur 'write'-Bloecke ab,
+-- der 'control'-Block wird dort ignoriert.
 --
 -- QUELLEN:
 --  * KACO "SunSpec Information Model Reference NX3"
@@ -25,6 +25,10 @@
 --    -> EIN/AUS: Modell 123 (Immediate Controls), Conn datenrelativ +2
 --       (am Geraet 40186): 1 = Einspeisung EIN, 0 = AUS (Disconnect).
 --       Conn_WinTms/+0 unimpl, Conn_RvtTms/+1 = 300 s (Rueckfallzeit!).
+--    -> LEISTUNGSLIMIT: WMaxLimPct datenrelativ +3 (40187, Prozent von
+--       WMax, SF=-2 an +21/40205 -> Rohwert = Prozent*100, 10000=100%),
+--       WMaxLimPct_RvtTms +5 (40189) = 300 s Rueckfallzeit,
+--       WMaxLim_Ena +7 (40191): 1 = Limit aktiv, 0 = Limit aus.
 --  * SunSpec Device Information Model Specification v1.2.1
 --
 -- SCAN-ERGEBNIS AM GERAET (2026-09-07, 192.168.20.171:502 unit 3):
@@ -49,6 +53,7 @@
 -- Modell 160 datenrelativ: DCA_SF=0 DCV_SF=1 DCW_SF=2 N=6
 --   Modul1: DCA=17 DCV=18 DCW=19 / Modul2: DCA=37 DCV=38 DCW=39
 -- Modell 123 datenrelativ: Conn_WinTms=0 Conn_RvtTms=1 Conn=2
+--   WMaxLimPct=3 WMaxLimPct_RvtTms=5 WMaxLim_Ena=7 WMaxLimPct_SF=21
 --
 -- SunSpec-Regeln (Spec v1.2.1):
 --  * "SunS"-Marker (0x53756E53) an Adresse 0, 40000 ODER 50000.
@@ -114,6 +119,11 @@ return {
                    sf_offset = 24, scale = 0.001 },      -- WH acc32 -> kWh
     temp_c     = { model = 103, offset = 31, fc = 3, type = "s16", unit = "C",
                    sf_offset = 35, not_impl = 0x8000 },  -- TmpCab
+    -- Leistungslimit-Anzeige (aus M123-Block; zeigt aktives Limit):
+    lim_pct    = { model = 123, offset = 3,  fc = 3, type = "u16", unit = "%",
+                   sf_offset = 21, not_impl = 0xFFFF },  -- WMaxLimPct
+    lim_ena    = { model = 123, offset = 7,  fc = 3, type = "u16", unit = "",
+                   not_impl = 0xFFFF },                  -- WMaxLim_Ena (0/1)
     -- DC-Werte aus Modell 160 (MPPT, 2 Strings) - eigener Block-Read:
     dc1_current = { model = 160, offset = 17, fc = 3, type = "u16", unit = "A",
                     sf_offset = 0, not_impl = 0xFFFF },  -- Modul1 DCA (SF=-2)
@@ -131,11 +141,11 @@ return {
 
   -- =====================================================================
   -- MANUELLE STEUERUNG (Phase 1.5): NUR ueber dev_control.cgi
-  -- (Button in devices.html mit Bestaetigungsdialog).
+  -- (Buttons in devices.html mit Bestaetigungsdialog).
   -- ACHTUNG: * Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet haben,
   --            sonst antwortet er mit Modbus-Exception.
   --          * Conn=0 trennt nur die EINSPEISUNG (WR bleibt erreichbar).
-  --          * Conn_RvtTms (M123+1) = 300 s: der WR kann den Befehl
+  --          * RvtTms (Conn +1 / Limit +5) = 300 s: der WR kann Befehle
   --            nach Ablauf der Rueckfallzeit selbststaendig aufheben!
   -- Bewusst NICHT 'write' genannt: device_poll weist write-Bloecke ab;
   -- control wird vom Poller ignoriert und NUR vom CGI ausgewertet.
@@ -147,6 +157,14 @@ return {
       offset = 2,         -- Conn (datenrelativ; am Geraet 40186)
       on     = 1,         -- 1 = Einspeisung EIN (Connect)
       off    = 0,         -- 0 = AUS (Disconnect)
+    },
+    limit = {
+      model      = 123,   -- Immediate Controls
+      pct_offset = 3,     -- WMaxLimPct (am Geraet 40187)
+      pct_scale  = 100,   -- Rohwert = Prozent * 100 (SF=-2), 10000 = 100%
+      ena_offset = 7,     -- WMaxLim_Ena (am Geraet 40191): 1=aktiv, 0=aus
+      pct_min    = 0,     -- erlaubter Bereich fuer den Button
+      pct_max    = 100,
     },
   },
 
@@ -163,6 +181,8 @@ return {
       cos_phi     = { -1, 1 },
       energy_kwh  = { 0, 100000000 },
       temp_c      = { -25, 100 },
+      lim_pct     = { 0, 100 },
+      lim_ena     = { 0, 1 },
       dc1_current = { 0, 30 },
       dc1_voltage = { 0, 1100 },
       dc1_power   = { -100, 8000 },
