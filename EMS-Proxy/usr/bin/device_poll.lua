@@ -18,6 +18,11 @@
 -- SunSpec-Scan-Cache: /tmp/emsproxy_devN_scan (RAM; nach Reboot neu)
 --   Cache loeschen erzwingt Neu-Scan (z.B. nach Firmware-Update).
 --
+-- POLL-LOCK: waehrend des Polls existiert /tmp/emsproxy_polling
+-- (Inhalt = Unix-Zeitstempel). dev_control.cgi wartet darauf, denn
+-- der Kaco NX3 vertraegt KEINE parallelen TCP-Verbindungen (Timeout!).
+-- Stale-Locks (aelter 120 s) werden von den Wartenden ignoriert.
+--
 -- BLOCK-READ (Learning Kaco NX3, 2026-09-07): Bei SunSpec-Profilen
 -- (model+offset-Punkte) wird jedes benoetigte Modell EINMAL als Block
 -- gelesen und alle Punkte daraus dekodiert. Einzelreads lieferten beim
@@ -33,6 +38,17 @@
 -- =====================================================================
 
 local L = dofile("/usr/local/bin/profile_loader.lua")
+
+local LOCKFILE = "/tmp/emsproxy_polling"
+
+local function lock_set()
+  local f = io.open(LOCKFILE, "w")
+  if f then f:write(os.time()) f:close() end
+end
+
+local function lock_clear()
+  os.remove(LOCKFILE)
+end
 
 local function cfg(n, key)
   return L.read_file("/etc/tesvolt_dev" .. n .. "_" .. key)
@@ -202,6 +218,8 @@ end
 
 -- ---------- main -----------------------------------------------------------
 
+lock_set()
+
 local slot = tonumber(arg and arg[1] or nil)
 if slot then
   if not poll_slot(slot) then
@@ -220,3 +238,5 @@ else
     print("OK: " .. count .. " Slot(s) gepollt -> /tmp/emsproxy_devN_status")
   end
 end
+
+lock_clear()
