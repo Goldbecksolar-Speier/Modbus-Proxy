@@ -36,7 +36,10 @@
              padding: 6px 18px; font-weight: bold; cursor: pointer; }
   .btn-off { background: #c0392b; color: #fff; border: 0; border-radius: 5px;
              padding: 6px 18px; font-weight: bold; cursor: pointer; }
-  .btn-on:disabled, .btn-off:disabled { background: #aaa; cursor: default; }
+  .btn-lim { background: #d17f2e; color: #fff; border: 0; border-radius: 5px;
+             padding: 6px 14px; font-weight: bold; cursor: pointer; }
+  .btn-on:disabled, .btn-off:disabled, .btn-lim:disabled { background: #aaa; cursor: default; }
+  input.pct { width: 50px; text-align: right; }
 </style>
 </head>
 <body>
@@ -66,7 +69,7 @@ var NSLOTS = 4;
 var KNOWN_PROFILES = ["", "solis_s6_hybrid", "kaco_nx3_sunspec", "janitza_umg604",
                       "tesvolt_bat", "bluesun_udan"];
 
-// Profile mit manuellem EIN/AUS (control-Block + dev_control.cgi).
+// Profile mit manueller Steuerung (control-Block + dev_control.cgi).
 // ACHTUNG: Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet haben!
 var CONTROL_PROFILES = { kaco_nx3_sunspec: 1 };
 
@@ -93,6 +96,10 @@ function buildSlots() {
       "Wechselrichter-Einspeisung: " +
       "<button class='btn-on' id='con" + n + "'>EIN</button> " +
       "<button class='btn-off' id='coff" + n + "'>AUS</button> " +
+      "&nbsp;|&nbsp; Leistungslimit: " +
+      "<input type='text' class='pct' id='pct" + n + "' placeholder='100'> % " +
+      "<button class='btn-lim' id='clim" + n + "'>Limit setzen</button> " +
+      "<button class='btn-lim' id='cnolim" + n + "'>Limit aufheben</button> " +
       "<span id='cmsg" + n + "'></span></div>" +
       "<table id='tbl" + n + "'><tbody></tbody></table>" +
       "</div>";
@@ -103,21 +110,26 @@ function buildSlots() {
       el("save" + n).addEventListener("click", function () { saveSlot(n); });
       el("con" + n).addEventListener("click", function () { sendCtl(n, "on"); });
       el("coff" + n).addEventListener("click", function () { sendCtl(n, "off"); });
+      el("clim" + n).addEventListener("click", function () { sendLimit(n); });
+      el("cnolim" + n).addEventListener("click", function () { sendCtl(n, "nolimit"); });
     })(m);
   }
 }
 
-function sendCtl(n, cmd) {
-  var txt = (cmd === "off")
-    ? "Wechselrichter in Slot " + n + " wirklich AUSSCHALTEN (Einspeisung trennen)?"
-    : "Wechselrichter in Slot " + n + " EINSCHALTEN (Einspeisung verbinden)?";
-  if (!confirm(txt)) return;
+function setCtlBusy(n, busy) {
+  el("con" + n).disabled = busy;
+  el("coff" + n).disabled = busy;
+  el("clim" + n).disabled = busy;
+  el("cnolim" + n).disabled = busy;
+}
+
+function ctlFetch(n, query, confirmTxt) {
+  if (!confirm(confirmTxt)) return;
   var m = el("cmsg" + n);
   m.innerText = "sende ...";
   m.style.color = "#555";
-  el("con" + n).disabled = true;
-  el("coff" + n).disabled = true;
-  fetch("/cgi-bin/dev_control.cgi?slot=" + n + "&cmd=" + cmd)
+  setCtlBusy(n, true);
+  fetch("/cgi-bin/dev_control.cgi?slot=" + n + "&" + query)
     .then(function (r) { return r.text(); })
     .then(function (t) {
       t = t.trim();
@@ -128,10 +140,27 @@ function sendCtl(n, cmd) {
       m.innerText = "HTTP-Fehler!";
       m.style.color = "#c00";
     })
-    .then(function () {
-      el("con" + n).disabled = false;
-      el("coff" + n).disabled = false;
-    });
+    .then(function () { setCtlBusy(n, false); });
+}
+
+function sendCtl(n, cmd) {
+  var txt;
+  if (cmd === "off")          txt = "Wechselrichter in Slot " + n + " wirklich AUSSCHALTEN (Einspeisung trennen)?";
+  else if (cmd === "on")      txt = "Wechselrichter in Slot " + n + " EINSCHALTEN (Einspeisung verbinden)?";
+  else                        txt = "Leistungslimit in Slot " + n + " wirklich AUFHEBEN (wieder 100% erlaubt)?";
+  ctlFetch(n, "cmd=" + cmd, txt);
+}
+
+function sendLimit(n) {
+  var pct = parseInt(el("pct" + n).value, 10);
+  if (isNaN(pct) || pct < 0 || pct > 100) {
+    var m = el("cmsg" + n);
+    m.innerText = "Bitte Prozentwert 0..100 eingeben!";
+    m.style.color = "#c00";
+    return;
+  }
+  ctlFetch(n, "cmd=limit&pct=" + pct,
+    "Wechselrichter in Slot " + n + " wirklich auf " + pct + "% Leistung begrenzen?");
 }
 
 function loadCfg(n) {
@@ -230,6 +259,8 @@ var REG_MAP = {
     cos_phi:     "M103+20 s16 (SF +21)",
     energy_kwh:  "M103+22 u32be (SF +24) x0.001",
     temp_c:      "M103+31 s16 (SF +35)",
+    lim_pct:     "M123+3 u16 WMaxLimPct (SF +21)",
+    lim_ena:     "M123+7 u16 WMaxLim_Ena (1=aktiv)",
     dc1_current: "M160+17 u16 (SF +0)",
     dc1_voltage: "M160+18 u16 (SF +1)",
     dc1_power:   "M160+19 s16 (SF +2)",
