@@ -25,10 +25,20 @@
 --    -> EIN/AUS: Modell 123 (Immediate Controls), Conn datenrelativ +2
 --       (am Geraet 40186): 1 = Einspeisung EIN, 0 = AUS (Disconnect).
 --       Conn_WinTms/+0 unimpl, Conn_RvtTms/+1 = 300 s (Rueckfallzeit!).
---    -> LEISTUNGSLIMIT: WMaxLimPct datenrelativ +3 (40187, Prozent von
---       WMax, SF=-2 an +21/40205 -> Rohwert = Prozent*100, 10000=100%),
---       WMaxLimPct_RvtTms +5 (40189) = 300 s Rueckfallzeit,
+--    -> LEISTUNGSLIMIT (Weg 1, M123): WMaxLimPct datenrelativ +3 (40187,
+--       Prozent von WMax, SF=-2 an +21/40205 -> Rohwert = Prozent*100,
+--       10000=100%), WMaxLimPct_RvtTms +5 (40189) = 300 s Rueckfallzeit,
 --       WMaxLim_Ena +7 (40191): 1 = Limit aktiv, 0 = Limit aus.
+--    -> LEISTUNGSLIMIT (Weg 2, M704 "DER AC Controls" - Learning
+--       2026-09-07: M123-Writes wurden vom NX3 kommentarlos verworfen,
+--       manche NX3-Firmwares akzeptieren nur die neueren 7xx-Modelle):
+--       M704-ID an 40465, Laenge 65, Daten ab 40467. Datenrelativ:
+--         WMaxLimPctEna     = +12 (40479): 1 = Limit aktiv, 0 = aus
+--         WMaxLimPct        = +13 (40480): Rohwert = Prozent*100
+--         WMaxLimPctRvrtTms = +16 (40483, u32) = 300 s Rueckfallzeit!
+--         WMaxLimPct_SF     = +52 (40519) = -2
+--       ACHTUNG: In M704 liegt Ena VOR Pct (umgekehrt zu M123).
+--       WSet/WSetPct (aktive Sollwerte) sind lt. Doku unimpl!
 --  * SunSpec Device Information Model Specification v1.2.1
 --
 -- SCAN-ERGEBNIS AM GERAET (2026-09-07, 192.168.20.171:502 unit 3):
@@ -54,6 +64,8 @@
 --   Modul1: DCA=17 DCV=18 DCW=19 / Modul2: DCA=37 DCV=38 DCW=39
 -- Modell 123 datenrelativ: Conn_WinTms=0 Conn_RvtTms=1 Conn=2
 --   WMaxLimPct=3 WMaxLimPct_RvtTms=5 WMaxLim_Ena=7 WMaxLimPct_SF=21
+-- Modell 704 datenrelativ: WMaxLimPctEna=12 WMaxLimPct=13
+--   WMaxLimPctRvrtTms=16(u32) WMaxLimPct_SF=52
 --
 -- SunSpec-Regeln (Spec v1.2.1):
 --  * "SunS"-Marker (0x53756E53) an Adresse 0, 40000 ODER 50000.
@@ -93,7 +105,8 @@ return {
   -- Messpunkte MODELL-RELATIV: model = SunSpec-Modell-ID,
   -- offset = Register-Offset ab Modell-DATENBEGINN (nach ID+Laenge).
   -- Absolutadresse = ScanErgebnis(model).data_start + offset.
-  -- device_poll liest je benoetigtem Modell (103 + 160) EINEN Block.
+  -- device_poll liest je benoetigtem Modell (103 + 123 + 160 + 704)
+  -- EINEN Block.
   read = {
     -- Kernpunkte: W(12) W_SF(13) Hz(14) Hz_SF(15) St(36)
     ac_power   = { model = 103, offset = 12, fc = 3, type = "s16", unit = "W",
@@ -119,11 +132,16 @@ return {
                    sf_offset = 24, scale = 0.001 },      -- WH acc32 -> kWh
     temp_c     = { model = 103, offset = 31, fc = 3, type = "s16", unit = "C",
                    sf_offset = 35, not_impl = 0x8000 },  -- TmpCab
-    -- Leistungslimit-Anzeige (aus M123-Block; zeigt aktives Limit):
+    -- Leistungslimit-Anzeige M123 (zeigt aktives Limit Weg 1):
     lim_pct    = { model = 123, offset = 3,  fc = 3, type = "u16", unit = "%",
                    sf_offset = 21, not_impl = 0xFFFF },  -- WMaxLimPct
     lim_ena    = { model = 123, offset = 7,  fc = 3, type = "u16", unit = "",
                    not_impl = 0xFFFF },                  -- WMaxLim_Ena (0/1)
+    -- Leistungslimit-Anzeige M704 (zeigt aktives Limit Weg 2):
+    lim704_pct = { model = 704, offset = 13, fc = 3, type = "u16", unit = "%",
+                   sf_offset = 52, not_impl = 0xFFFF },  -- WMaxLimPct (M704)
+    lim704_ena = { model = 704, offset = 12, fc = 3, type = "u16", unit = "",
+                   not_impl = 0xFFFF },                  -- WMaxLimPctEna (0/1)
     -- DC-Werte aus Modell 160 (MPPT, 2 Strings) - eigener Block-Read:
     dc1_current = { model = 160, offset = 17, fc = 3, type = "u16", unit = "A",
                     sf_offset = 0, not_impl = 0xFFFF },  -- Modul1 DCA (SF=-2)
@@ -143,10 +161,12 @@ return {
   -- MANUELLE STEUERUNG (Phase 1.5): NUR ueber dev_control.cgi
   -- (Buttons in devices.html mit Bestaetigungsdialog).
   -- ACHTUNG: * Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet haben,
-  --            sonst antwortet er mit Modbus-Exception.
+  --            sonst antwortet er mit Modbus-Exception ODER verwirft
+  --            Writes kommentarlos (Timeout ohne Antwort!).
   --          * Conn=0 trennt nur die EINSPEISUNG (WR bleibt erreichbar).
-  --          * RvtTms (Conn +1 / Limit +5) = 300 s: der WR kann Befehle
-  --            nach Ablauf der Rueckfallzeit selbststaendig aufheben!
+  --          * RvtTms (M123: Conn +1 / Limit +5; M704: +16) = 300 s:
+  --            der WR kann Befehle nach Ablauf der Rueckfallzeit
+  --            selbststaendig aufheben!
   -- Bewusst NICHT 'write' genannt: device_poll weist write-Bloecke ab;
   -- control wird vom Poller ignoriert und NUR vom CGI ausgewertet.
   -- =====================================================================
@@ -159,11 +179,19 @@ return {
       off    = 0,         -- 0 = AUS (Disconnect)
     },
     limit = {
-      model      = 123,   -- Immediate Controls
+      model      = 123,   -- Immediate Controls (Weg 1)
       pct_offset = 3,     -- WMaxLimPct (am Geraet 40187)
       pct_scale  = 100,   -- Rohwert = Prozent * 100 (SF=-2), 10000 = 100%
       ena_offset = 7,     -- WMaxLim_Ena (am Geraet 40191): 1=aktiv, 0=aus
       pct_min    = 0,     -- erlaubter Bereich fuer den Button
+      pct_max    = 100,
+    },
+    limit704 = {
+      model      = 704,   -- DER AC Controls (Weg 2 - falls M123 ignoriert wird)
+      pct_offset = 13,    -- WMaxLimPct (am Geraet 40480)
+      pct_scale  = 100,   -- Rohwert = Prozent * 100 (SF=-2), 10000 = 100%
+      ena_offset = 12,    -- WMaxLimPctEna (am Geraet 40479): 1=aktiv, 0=aus
+      pct_min    = 0,
       pct_max    = 100,
     },
   },
@@ -183,6 +211,8 @@ return {
       temp_c      = { -25, 100 },
       lim_pct     = { 0, 100 },
       lim_ena     = { 0, 1 },
+      lim704_pct  = { 0, 100 },
+      lim704_ena  = { 0, 1 },
       dc1_current = { 0, 30 },
       dc1_voltage = { 0, 1100 },
       dc1_power   = { -100, 8000 },
