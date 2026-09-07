@@ -9,6 +9,8 @@
 --       W=40084, W_SF=40085(=1), Hz=40086, Hz_SF=40087(=-2), St=40108;
 --       Device Address = 3; Schreibzugriff muss am WR separat
 --       freigeschaltet werden (MODBUS/SunSpec-Menue), sonst read-only.
+--    -> NICHT implementiert lt. Doku: DCA/DCV/DCW (DC-Werte), TmpSnk,
+--       TmpTrns, TmpOt (nur TmpCab vorhanden).
 --  * SunSpec Device Information Model Specification v1.2.1
 --
 -- SCAN-ERGEBNIS AM GERAET (2026-09-07, 192.168.20.171:502 unit 3):
@@ -27,8 +29,9 @@
 --
 -- OFFSET-KONVENTION: offset zaehlt ab DATENBEGINN des Modells
 -- (data_start = Header-Adresse + 2, also NACH ID+Laenge).
--- Modell 103 datenrelativ: A=0 A_SF=4 PhVphA=8 V_SF=11
---   W=12 W_SF=13 Hz=14 Hz_SF=15 VA=16 WH=22 DCW=29 TmpCab=31 St=36
+-- Modell 103 datenrelativ: A=0 AphA=1 A_SF=4 PPVphAB=5 PhVphA=8 V_SF=11
+--   W=12 W_SF=13 Hz=14 Hz_SF=15 VA=16 VAr=18 PF=20 PF_SF=21
+--   WH=22(u32) WH_SF=24 TmpCab=31 Tmp_SF=35 St=36
 --
 -- SunSpec-Regeln (Spec v1.2.1):
 --  * "SunS"-Marker (0x53756E53) an Adresse 0, 40000 ODER 50000.
@@ -70,20 +73,36 @@ return {
   -- Absolutadresse = ScanErgebnis(model).data_start + offset.
   -- device_poll liest Modell 103 als EINEN Block und dekodiert daraus.
   read = {
-    -- Modell 103 datenrelativ: W(12) W_SF(13) Hz(14) Hz_SF(15) St(36)
-    ac_power = { model = 103, offset = 12, fc = 3, type = "s16", unit = "W",
-                 sf_offset = 13, not_impl = 0x8000 },
-    ac_freq  = { model = 103, offset = 14, fc = 3, type = "u16", unit = "Hz",
-                 sf_offset = 15, not_impl = 0xFFFF },
-    status   = { model = 103, offset = 36, fc = 3, type = "u16", unit = "",
-                 not_impl = 0xFFFF },  -- St enum16 (4=MPPT, 7=Fault, 8=Standby)
+    -- Kernpunkte: W(12) W_SF(13) Hz(14) Hz_SF(15) St(36)
+    ac_power   = { model = 103, offset = 12, fc = 3, type = "s16", unit = "W",
+                   sf_offset = 13, not_impl = 0x8000 },
+    ac_freq    = { model = 103, offset = 14, fc = 3, type = "u16", unit = "Hz",
+                   sf_offset = 15, not_impl = 0xFFFF },
+    status     = { model = 103, offset = 36, fc = 3, type = "u16", unit = "",
+                   not_impl = 0xFFFF },  -- St enum16 (4=MPPT, 7=Fault, 8=Standby)
+    -- Zusatzpunkte (alle aus demselben Modell-103-Block, keine Extra-Reads):
+    ac_current = { model = 103, offset = 0,  fc = 3, type = "u16", unit = "A",
+                   sf_offset = 4, not_impl = 0xFFFF },   -- A gesamt
+    u_l1n      = { model = 103, offset = 8,  fc = 3, type = "u16", unit = "V",
+                   sf_offset = 11, not_impl = 0xFFFF },  -- PhVphA
+    cos_phi    = { model = 103, offset = 20, fc = 3, type = "s16", unit = "",
+                   sf_offset = 21, not_impl = 0x8000 },  -- PF (0..1)
+    energy_kwh = { model = 103, offset = 22, fc = 3, type = "u32be", unit = "kWh",
+                   sf_offset = 24, scale = 0.001 },      -- WH acc32 -> kWh
+    temp_c     = { model = 103, offset = 31, fc = 3, type = "s16", unit = "C",
+                   sf_offset = 35, not_impl = 0x8000 },  -- TmpCab
   },
 
   ui = {
     plaus = {
-      ac_power = { -1000, 12000 },
-      ac_freq  = { 45, 55 },
-      status   = { 1, 8 },
+      ac_power   = { -1000, 12000 },
+      ac_freq    = { 45, 55 },
+      status     = { 1, 8 },
+      ac_current = { 0, 30 },
+      u_l1n      = { 150, 280 },
+      cos_phi    = { -1, 1 },
+      energy_kwh = { 0, 100000000 },
+      temp_c     = { -25, 100 },
     },
   },
 
