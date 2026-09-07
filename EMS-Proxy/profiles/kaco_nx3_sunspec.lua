@@ -1,6 +1,10 @@
 -- =====================================================================
 -- Profil: Kaco blueplanet NX3 10 kW (PV-Wechselrichter)
--- Standort: Hebauer. Phase 1: NUR LESEN - kein write-Block!
+-- Standort: Hebauer. Phase 1: Messwerte NUR LESEN - kein write-Block!
+-- AUSNAHME: control-Block (unten) = manueller EIN/AUS-Befehl NUR ueber
+-- dev_control.cgi (Button mit Bestaetigung). Der Watchdog/Poller
+-- schreibt NIEMALS - device_poll weist nur 'write'-Bloecke ab, der
+-- 'control'-Block wird dort ignoriert.
 --
 -- QUELLEN:
 --  * KACO "SunSpec Information Model Reference NX3"
@@ -18,6 +22,9 @@
 --         String 1: DCA=+17 DCV=+18 DCW=+19
 --         String 2: DCA=+37 DCV=+38 DCW=+39
 --       DCWH/Tms/Tmp/DCSt/DCEvt in M160 = unimpl -> weggelassen.
+--    -> EIN/AUS: Modell 123 (Immediate Controls), Conn datenrelativ +2
+--       (am Geraet 40186): 1 = Einspeisung EIN, 0 = AUS (Disconnect).
+--       Conn_WinTms/+0 unimpl, Conn_RvtTms/+1 = 300 s (Rueckfallzeit!).
 --  * SunSpec Device Information Model Specification v1.2.1
 --
 -- SCAN-ERGEBNIS AM GERAET (2026-09-07, 192.168.20.171:502 unit 3):
@@ -41,6 +48,7 @@
 --   VAr=18 PF=20 PF_SF=21 WH=22(u32) WH_SF=24 TmpCab=31 Tmp_SF=35 St=36
 -- Modell 160 datenrelativ: DCA_SF=0 DCV_SF=1 DCW_SF=2 N=6
 --   Modul1: DCA=17 DCV=18 DCW=19 / Modul2: DCA=37 DCV=38 DCW=39
+-- Modell 123 datenrelativ: Conn_WinTms=0 Conn_RvtTms=1 Conn=2
 --
 -- SunSpec-Regeln (Spec v1.2.1):
 --  * "SunS"-Marker (0x53756E53) an Adresse 0, 40000 ODER 50000.
@@ -121,6 +129,27 @@ return {
                     sf_offset = 2, not_impl = 0x8000 },  -- Modul2 DCW
   },
 
+  -- =====================================================================
+  -- MANUELLE STEUERUNG (Phase 1.5): NUR ueber dev_control.cgi
+  -- (Button in devices.html mit Bestaetigungsdialog).
+  -- ACHTUNG: * Der WR muss Modbus-SCHREIBZUGRIFF freigeschaltet haben,
+  --            sonst antwortet er mit Modbus-Exception.
+  --          * Conn=0 trennt nur die EINSPEISUNG (WR bleibt erreichbar).
+  --          * Conn_RvtTms (M123+1) = 300 s: der WR kann den Befehl
+  --            nach Ablauf der Rueckfallzeit selbststaendig aufheben!
+  -- Bewusst NICHT 'write' genannt: device_poll weist write-Bloecke ab;
+  -- control wird vom Poller ignoriert und NUR vom CGI ausgewertet.
+  -- =====================================================================
+  control = {
+    manual_only = true,   -- niemals automatisch (Watchdog/Poller tabu)
+    conn = {
+      model  = 123,       -- Immediate Controls
+      offset = 2,         -- Conn (datenrelativ; am Geraet 40186)
+      on     = 1,         -- 1 = Einspeisung EIN (Connect)
+      off    = 0,         -- 0 = AUS (Disconnect)
+    },
+  },
+
   ui = {
     plaus = {
       ac_power    = { -1000, 12000 },
@@ -143,6 +172,5 @@ return {
     },
   },
 
-  -- KEIN write-Block: read-only. Schreibzugriff wuerde bei KACO
-  -- ohnehin separate Freischaltung am Geraet erfordern (Phase 2).
+  -- KEIN write-Block: Messwerte bleiben strikt read-only.
 }
