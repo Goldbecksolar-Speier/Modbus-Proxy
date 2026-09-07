@@ -8,8 +8,12 @@
 --   L.load_profile(name)          Profil aus PROFILE_DIR laden (dofile)
 --   L.read_regs(ip,port,unit,fc,addr,count[,timeout])
 --                                 N Holding/Input-Register lesen
+--   L.read_regs_retry(...)        wie read_regs, mit Wiederholversuchen
 --   L.sunspec_scan(ip,port,unit,cfg)
 --                                 SunS-Marker suchen + Modellkette lesen
+--   L.read_model_block(ip,port,unit,scan,model_id[,timeout])
+--                                 GANZES Modell als Block lesen (chunked)
+--   L.point_from_block(p,block)   Messpunkt aus Modell-Block dekodieren
 --   L.read_point(dev,prof,p,scan,sf_cache)
 --                                 einen Messpunkt aufloesen und lesen
 --   L.decode / L.apply_sf / L.is_not_impl / L.sleep / L.read_file
@@ -22,8 +26,9 @@
 --
 -- ROBUSTHEIT (Learning Kaco NX3, 2026-09-07):
 --   Der NX3 beantwortet schnell aufeinanderfolgende TCP-Verbindungen
---   teils mit Timeout. Der Modell-Scan nutzt deshalb 5 s Timeout,
---   bis zu 3 Versuche pro Header-Read und kurze Pausen dazwischen.
+--   teils mit Timeout und liefert bei Einzelreads sporadisch
+--   verstuemmelte Werte. Deshalb: Scan mit 5 s Timeout + Retry, und
+--   Block-Read (ein Modell = ein Read) statt vieler Einzelreads.
 --
 -- STRIKT READ-ONLY: dieses Modul enthaelt KEINE Schreibfunktion.
 -- =====================================================================
@@ -188,6 +193,51 @@ function M.sunspec_scan(ip, port, unit, cfg)
     end
   end
   return nil, "ERR:SunS-Marker nicht gefunden (0/40000/50000)"
+end
+
+-- ---------- Modell als Block lesen ------------------------------------------
+
+-- GANZES SunSpec-Modell in einem (bzw. wenigen) Reads holen.
+-- Vorteil: der Block ist IN SICH KONSISTENT - Einzelreads liefern beim
+-- Kaco NX3 sporadisch verstuemmelte Werte. Chunked (max 100 Reg/Read,
+-- Modbus-Limit 125), Rueckgabe: Array block[1..len] (block[offset+1]!).
+function M.read_model_block(ip, port, unit, scan, model_id, timeout)
+  local m = scan and scan.models and scan.models[model_id]
+  if not m then
+    return nil, "ERR:Modell " .. tostring(model_id) .. " nicht im Scan"
+  end
+  local block, pos = {}, 0
+  while pos < m.len do
+    local n = math.min(100, m.len - pos)
+    local w, e = M.read_regs_retry(ip, port, unit, 3, m.data_start + pos, n,
+                                   timeout or 5, 3, 0.5)
+    if not w then return nil, e end
+    for i = 1, n do block[pos + i] = w[i] end
+    pos = pos + n
+    if pos < m.len then M.sleep(0.2) end
+  end
+  return block
+end
+
+-- Messpunkt aus einem vorab gelesenen Modell-Block dekodieren.
+-- p.offset/p.sf_offset sind datenrelativ (0-basiert) -> Index offset+1.
+function M.point_from_block(p, block)
+  local off = p.offset or 0
+  local words = { block[off + 1], block[off + 2] }
+  if words[1] == nil then return nil, "ERR:Offset ausserhalb Block" end
+  if M.is_not_impl(words, p.type, p.not_impl) then
+    return nil, "NA:not implemented"
+  end
+  local v = M.decode(words, p.type)
+  if v == nil then return nil, "ERR:decode " .. tostring(p.type) end
+  if p.sf_offset then
+    local sfv = block[p.sf_offset + 1]
+    if sfv == nil then return nil, "ERR:SF-Offset ausserhalb Block" end
+    v = M.apply_sf(v, sfv)
+    if v == nil then return nil, "NA:SF not implemented" end
+  end
+  if p.scale and p.scale ~= 1 then v = v * p.scale end
+  return v
 end
 
 -- ---------- Messpunkt lesen -------------------------------------------------
