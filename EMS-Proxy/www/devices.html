@@ -141,8 +141,8 @@ var META_KEYS = { ts: 1, slot: 1, profile: 1, enabled: 1, unverified: 1,
                   scan_base: 1, points_ok: 1, points_err: 1, error: 1 };
 
 // Register-Referenz je Profil (aus EMS-Proxy/profiles/*.lua, nur Anzeige).
-// Kaco: KEINE Absolutadressen (KACO-Vorgabe) - modell-relativ M<id>+<offset>,
-// Absolutadresse ergibt sich erst aus dem SunSpec-Scan.
+// Kaco: KEINE Absolutadressen (KACO-Vorgabe) - modell-relativ M<id>+<offset>
+// AB DATENBEGINN (nach ID+Laenge); Absolutadresse ergibt sich aus dem Scan.
 var REG_MAP = {
   solis_s6_hybrid: {
     pv_power:    "33057 FC04 u32be",
@@ -173,8 +173,8 @@ var REG_MAP = {
     p_sum: "19026 FC03 f32be"
   },
   kaco_nx3_sunspec: {
-    ac_power: "M103+14 s16 (SF +15)",
-    ac_freq:  "M103+16 u16 (SF +17)",
+    ac_power: "M103+12 s16 (SF +13)",
+    ac_freq:  "M103+14 u16 (SF +15)",
     status:   "M103+36 u16"
   }
 };
