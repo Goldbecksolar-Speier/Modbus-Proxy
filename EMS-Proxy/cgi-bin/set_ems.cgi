@@ -1,7 +1,8 @@
 #!/bin/sh
 # Speichert EMS-Quelle und EMS-IPs (Setup-Seite)
-#   /cgi-bin/set_ems.cgi?source=tesvolt|datamanager&ip_dm=..&ip_sma=..&unit_dm=..&ip_ems_t=..
+#   /cgi-bin/set_ems.cgi?source=tesvolt|datamanager|solis&ip_dm=..&ip_sma=..&unit_dm=..&ip_ems_t=..&ip_ems_s=..
 #   ip_ems_t = Tesvolt EMS (Marketer-Interface) - getrennt von der Batterie-IP ip_t!
+#   ip_ems_s = Solis EMS (steuerndes System; Registerbelegung noch offen)
 # WICHTIG: laeuft als User uhttpd (uid 575). Die Zieldateien muessen
 # existieren und uhttpd gehoeren (macht github_update.sh). Schlaegt das
 # Schreiben fehl, wird FEHLER gemeldet - nicht stillschweigend OK!
@@ -12,6 +13,7 @@ SRC=$(echo "$QUERY_STRING" | sed -n 's/.*source=\([a-z]*\).*/\1/p')
 IP_DM=$(echo "$QUERY_STRING" | sed -n 's/.*ip_dm=\([0-9.]*\).*/\1/p')
 IP_SMA=$(echo "$QUERY_STRING" | sed -n 's/.*ip_sma=\([0-9.]*\).*/\1/p')
 IP_EMS_T=$(echo "$QUERY_STRING" | sed -n 's/.*ip_ems_t=\([0-9.]*\).*/\1/p')
+IP_EMS_S=$(echo "$QUERY_STRING" | sed -n 's/.*ip_ems_s=\([0-9.]*\).*/\1/p')
 UNIT_DM=$(echo "$QUERY_STRING" | sed -n 's/.*unit_dm=\([0-9]*\).*/\1/p')
 
 ERR=""
@@ -26,13 +28,14 @@ write_check() {
 }
 
 case "$SRC" in
-    tesvolt|datamanager) write_check /etc/tesvolt_ems_source "$SRC" ;;
+    tesvolt|datamanager|solis) write_check /etc/tesvolt_ems_source "$SRC" ;;
     "") ;;
     *) ERR="$ERR source-ungueltig($SRC)" ;;
 esac
 [ -n "$IP_DM" ]    && write_check /etc/tesvolt_ip_dm    "$IP_DM"
 [ -n "$IP_SMA" ]   && write_check /etc/tesvolt_ip_sma   "$IP_SMA"
 [ -n "$IP_EMS_T" ] && write_check /etc/tesvolt_ip_ems_t "$IP_EMS_T"
+[ -n "$IP_EMS_S" ] && write_check /etc/tesvolt_ip_ems_s "$IP_EMS_S"
 [ -n "$UNIT_DM" ]  && write_check /etc/tesvolt_unit_dm  "$UNIT_DM"
 
 if [ -n "$ERR" ]; then
