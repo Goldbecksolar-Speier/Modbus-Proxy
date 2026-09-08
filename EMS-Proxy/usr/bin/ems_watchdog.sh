@@ -209,6 +209,13 @@ sniff_tick() {
 # das Format "MAC: xx:.. PORTMAP: 0x04 VID: .." (Port als BITMASKE,
 # 0x04 = Bit 2 = Port 2). Externe QCA-Chips (ar8xxx) liefern dagegen
 # "Port N: MAC xx:.." - der Parser unten versteht beide Formate.
+# LEARNING (2026-09-08, echte Geraetedaten): dump_arl liefert pro MAC
+# MEHRERE Eintraege (einen je VLAN), oft mit PORTMAP 0x01 = CPU-Port.
+# Der echte physische Port steht im Eintrag mit PORTMAP != 0x01 ->
+# alle Treffer durchgehen und den ersten Nicht-CPU-Port nehmen.
+# Bleibt nur Port 0 uebrig, haengt das Geraet an KEINEM Switch-Port
+# (WLAN-Client) - sein Verkehr laeuft immer durch die CPU, tcpdump
+# sieht ihn auch OHNE Mirroring. Die UI zeigt dafuer "WLAN?".
 # Beide sind LERN-Tabellen: ein Geraet taucht nur auf, wenn es
 # kuerzlich Verkehr hatte (ggf. einmal anpingen).
 # Die Einstellung ist NICHT reboot-fest (gewollt, Regel 23) und kostet
@@ -289,27 +296,36 @@ mirror_tick() {
                 [ "$AFLG" = "0x0" ] && continue             # unvollstaendige Eintraege
                 case "$AMAC" in *:*) : ;; *) continue ;; esac
                 case "$AMAC" in 00:00:00:00:00:00) continue ;; esac
-                ALINE=$(echo "$ARL" | grep -iF "$AMAC" | head -n 1)
-                [ -z "$ALINE" ] && continue
+                # ALLE ARL-Treffer der MAC durchgehen (dump_arl: ein
+                # Eintrag je VLAN!) - erster Nicht-CPU-Port gewinnt,
+                # Port 0 nur als letzter Ausweg (= WLAN-Client).
                 PN=""
-                case "$ALINE" in
-                    *PORTMAP*|*portmap*|*Portmap*)
-                        # ar40xx: "MAC: .. PORTMAP: 0x04 .." -> Bitmaske, niedrigstes Bit = Port
-                        PM=$(echo "$ALINE" | sed -n 's/.*[Pp][Oo][Rr][Tt][Mm][Aa][Pp][: ]*0[xX]\([0-9a-fA-F][0-9a-fA-F]*\).*/\1/p')
-                        if [ -n "$PM" ]; then
-                            PMV=$((0x$PM))
-                            B=0
-                            while [ "$B" -le 5 ]; do
-                                if [ $(( (PMV >> B) & 1 )) -eq 1 ]; then PN=$B; break; fi
-                                B=$((B + 1))
-                            done
-                        fi
-                        ;;
-                    *)
-                        # ar8xxx: "Port N: MAC xx:.."
-                        PN=$(echo "$ALINE" | sed -n 's/.*[Pp]ort[: ]*\([0-9][0-9]*\).*/\1/p')
-                        ;;
-                esac
+                echo "$ARL" | grep -iF "$AMAC" | while read -r ALINE; do
+                    CAND=""
+                    case "$ALINE" in
+                        *PORTMAP*|*portmap*|*Portmap*)
+                            # ar40xx: "MAC: .. PORTMAP: 0x04 .." -> Bitmaske
+                            PM=$(echo "$ALINE" | sed -n 's/.*[Pp][Oo][Rr][Tt][Mm][Aa][Pp][: ]*0[xX]\([0-9a-fA-F][0-9a-fA-F]*\).*/\1/p')
+                            if [ -n "$PM" ]; then
+                                PMV=$((0x$PM))
+                                B=0
+                                while [ "$B" -le 5 ]; do
+                                    if [ $(( (PMV >> B) & 1 )) -eq 1 ]; then CAND=$B; break; fi
+                                    B=$((B + 1))
+                                done
+                            fi
+                            ;;
+                        *)
+                            # ar8xxx: "Port N: MAC xx:.."
+                            CAND=$(echo "$ALINE" | sed -n 's/.*[Pp]ort[: ]*\([0-9][0-9]*\).*/\1/p')
+                            ;;
+                    esac
+                    [ -n "$CAND" ] && echo "$CAND"
+                done > /tmp/emsproxy_arlcand.tmp
+                # erster Nicht-Null-Kandidat, sonst 0 (WLAN/CPU)
+                PN=$(grep -v '^0$' /tmp/emsproxy_arlcand.tmp 2>/dev/null | head -n 1)
+                [ -z "$PN" ] && PN=$(head -n 1 /tmp/emsproxy_arlcand.tmp 2>/dev/null)
+                rm -f /tmp/emsproxy_arlcand.tmp
                 [ -n "$PN" ] && echo "ip=$AIP:$PN"
             done < /proc/net/arp
         fi

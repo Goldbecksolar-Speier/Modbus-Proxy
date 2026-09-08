@@ -115,6 +115,7 @@
   <ul>
     <li>&#10003; Verkehr von/zu den eigenen Diensten des Routers (Proxy, Geraete-Poller)</li>
     <li>&#10003; Verkehr, der ueber den Router geroutet wird (z.B. Geraet &#8594; Internet/Cloud via NAT)</li>
+    <li>&#10003; Verkehr von WLAN-Geraeten (SwPort "WLAN?") - der laeuft immer durch die CPU</li>
     <li>&#10007; LAN-zu-LAN-Verkehr FREMDER Geraete (z.B. Tesvolt EMS &#8594; Wechselrichter direkt):
         der Switch-Chip leitet solche Pakete direkt weiter, die Router-CPU (und damit tcpdump)
         sieht davon NICHTS.</li>
@@ -232,8 +233,12 @@ var lastResult = null;
 
 function swPortOf(addr) {
   // addr = "192.168.20.98:502" -> Switch-Port der IP (aus ipMap) oder "-"
+  // Port 0 = CPU = Geraet haengt an keinem Switch-Port (WLAN-Client)
   var ip = String(addr).split(":")[0];
-  return ipMap[ip] || "-";
+  var p = ipMap[ip];
+  if (!p) { return "-"; }
+  if (p === "0") { return "WLAN?"; }
+  return p;
 }
 
 function loadResult() {
@@ -315,9 +320,12 @@ function renderMirror(txt) {
   var mapChanged = (JSON.stringify(newMap) !== JSON.stringify(ipMap));
   ipMap = newMap;
   if (mapChanged && lastResult !== null) { renderResult(lastResult); }
-  // Umkehrung: Switch-Port -> Liste der IPs (fuer die Port-Tags)
+  // Umkehrung: Switch-Port -> Liste der IPs (fuer die Port-Tags).
+  // Port 0 (CPU) auslassen: das sind WLAN-Clients ohne Switch-Port -
+  // deren Verkehr sieht tcpdump auch ohne Mirroring.
   var byPort = {};
   for (var ip in ipMap) {
+    if (ipMap[ip] === "0") { continue; }
     if (!byPort[ipMap[ip]]) { byPort[ipMap[ip]] = []; }
     byPort[ipMap[ip]].push(ip);
   }
