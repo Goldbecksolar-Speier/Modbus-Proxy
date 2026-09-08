@@ -218,9 +218,11 @@
   <div style="font-size:12px;color:#666;margin-bottom:6px;">
     Werte aus dem Watchdog-Poll der Geraete-Slots (kein zusaetzlicher Modbus-Verkehr).
     Geraete werden auf der Seite Geraete-Slots uebernommen, die Wert-Auswahl erfolgt in Setup.
+    Haken in der Spalte &quot;Verlauf&quot; nimmt den Wert in die 24-h-Verlaufskurven unten auf -
+    Abwahl entfernt die Kurve samt gesammelter Daten (Historie liegt im Browser/localStorage).
   </div>
   <table id="slotmon_table">
-    <thead><tr><th>Slot</th><th>Geraet</th><th>Wert</th><th>Messwert</th><th>Stand</th></tr></thead>
+    <thead><tr><th>Slot</th><th>Geraet</th><th>Wert</th><th>Messwert</th><th>Stand</th><th>Verlauf</th></tr></thead>
     <tbody></tbody>
   </table>
 </div>
@@ -229,6 +231,7 @@
 <div class="panel hist-panel">
   <h3>Verlauf (24 h, 5-min-Raster)<span class="src-tag" id="hist_src"></span> <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
   <div id="hist_rows"></div>
+  <div id="hist_rows_sm"></div>
   <div class="hist-axis" id="hist_axis"></div>
   <div class="hist-legend">
     Blaue Flaeche = Messwertverlauf | gestrichelte Linie = Null (bei Vorzeichen-Signalen) | Luecken = keine Daten | Maus auf Kurve = Zeit + Wert
@@ -356,6 +359,44 @@ function buildTable() {
 // via read_dev.cgi - KEIN zusaetzlicher Modbus-Verkehr.
 var SLOTMON_NSLOTS = 4;
 
+// Verlaufs-Auswahl fuer Slot-Monitoring-Werte (Checkbox-Spalte "Verlauf").
+// slotmon_hist["<slot>:<key>"] = { label: "..." }; Kurven-Daten liegen in
+// history_data unter dem Schluessel "sm_<slot>:<key>".
+var SLOTMON_HIST_KEY = "ems_slotmon_hist_v1";
+var slotmon_hist = {};
+try { slotmon_hist = JSON.parse(localStorage.getItem(SLOTMON_HIST_KEY)) || {}; } catch (e) { slotmon_hist = {}; }
+var slotmon_labels = {};   // smId -> Anzeigename (bei jedem Refresh aktualisiert)
+var slotmon_now = {};      // "sm_<smId>" -> letzter Messwert (fuer hist-now)
+
+function slotmonHistSave() {
+  try { localStorage.setItem(SLOTMON_HIST_KEY, JSON.stringify(slotmon_hist)); } catch (e) {}
+}
+
+function buildSlotmonHistory() {
+  var wrap = document.getElementById("hist_rows_sm");
+  wrap.innerHTML = "";
+  Object.keys(slotmon_hist).sort().forEach(function (smId) {
+    var reg = "sm_" + smId;
+    var row = document.createElement("div");
+    row.className = "hist-row";
+    row.innerHTML =
+      "<div class='hist-label'><b>" + (slotmon_hist[smId].label || smId) + "</b>Slot-Monitoring</div>" +
+      "<div class='hist-canvas-wrap'><canvas class='hist-canvas' id='hist_" + reg + "'></canvas></div>" +
+      "<div class='hist-now' id='histnow_" + reg + "'>-</div>";
+    wrap.appendChild(row);
+    attachTooltip(reg);
+  });
+}
+
+function renderSlotmonHistoryAll() {
+  Object.keys(slotmon_hist).forEach(function (smId) {
+    var reg = "sm_" + smId;
+    renderHistoryRow(reg);
+    var el = document.getElementById("histnow_" + reg);
+    if (el) el.innerText = (slotmon_now[reg] === undefined) ? "-" : slotmon_now[reg];
+  });
+}
+
 function slotmonParse(t) {
   var kv = {};
   t.split("\n").forEach(function (line) {
@@ -384,6 +425,8 @@ function slotmonRefresh() {
     } else {
       panel.style.display = "none";
     }
+    histSave();
+    renderSlotmonHistoryAll();
   }
   for (var n = 1; n <= SLOTMON_NSLOTS; n++) {
     (function (n) {
@@ -401,7 +444,7 @@ function slotmonRefresh() {
               var rows = "";
               if (st === "NOSTATUS" || st === "") {
                 rows = "<tr><td>" + n + "</td><td>" + label +
-                       "</td><td colspan='3' class='hm-stale'>noch kein Poll-Ergebnis</td></tr>";
+                       "</td><td colspan='4' class='hm-stale'>noch kein Poll-Ergebnis</td></tr>";
               } else {
                 var kv = slotmonParse(st);
                 var age = kv.ts ? Math.round(Date.now() / 1000 - parseInt(kv.ts, 10)) : null;
@@ -410,6 +453,15 @@ function slotmonRefresh() {
                 mon.forEach(function (k, i) {
                   var v = kv[k];
                   var cls = (v === undefined) ? "hm-stale" : (stale ? "hm-warn" : "hm-ok");
+                  var smId = n + ":" + k;
+                  slotmon_labels[smId] = label + " " + k;
+                  // Angehakte Werte in die Browser-Historie uebernehmen
+                  if (slotmon_hist[smId] && v !== undefined) {
+                    var num = parseFloat(v);
+                    if (!isNaN(num) && !stale) histRecord("sm_" + smId, num);
+                    slotmon_now["sm_" + smId] = v;
+                    slotmon_hist[smId].label = slotmon_labels[smId];
+                  }
                   rows += "<tr>" +
                     (i === 0 ? "<td rowspan='" + mon.length + "'>" + n + "</td>" +
                                "<td rowspan='" + mon.length + "'>" + label +
@@ -417,6 +469,9 @@ function slotmonRefresh() {
                     "<td>" + k + "</td>" +
                     "<td class='val'>" + (v === undefined ? "-" : v) + "</td>" +
                     "<td class='" + cls + "'>" + (v === undefined ? "Wert fehlt im Poll" : ageTxt) + "</td>" +
+                    "<td style='text-align:center'><input type='checkbox' data-sm='" + smId + "'" +
+                    (slotmon_hist[smId] ? " checked" : "") +
+                    " title='Wert in die 24-h-Verlaufskurven aufnehmen'></td>" +
                     "</tr>";
                 });
               }
@@ -971,12 +1026,34 @@ function refresh() {
   });
 }
 
+// Checkbox-Delegation: Haken = Wert in den Verlauf aufnehmen,
+// Abwahl = Kurve + gesammelte Daten entfernen (Tabelle wird alle 10 s neu
+// aufgebaut, daher Listener auf dem tbody statt auf den Checkboxen selbst)
+document.querySelector("#slotmon_table tbody").addEventListener("change", function (ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute || !t.getAttribute("data-sm")) return;
+  var smId = t.getAttribute("data-sm");
+  if (t.checked) {
+    slotmon_hist[smId] = { label: slotmon_labels[smId] || smId };
+  } else {
+    delete slotmon_hist[smId];
+    delete history_data["sm_" + smId];
+    delete slotmon_now["sm_" + smId];
+    histSave();
+  }
+  slotmonHistSave();
+  buildSlotmonHistory();
+  renderSlotmonHistoryAll();
+});
+
 buildTable();
 buildHistory();
+buildSlotmonHistory();
 renderHistoryAll();
+renderSlotmonHistoryAll();
 refresh();
 setInterval(refresh, 10000);
-window.addEventListener("resize", renderHistoryAll);
+window.addEventListener("resize", function () { renderHistoryAll(); renderSlotmonHistoryAll(); });
 </script>
 
 </body>
