@@ -51,6 +51,7 @@
   <select id="ems_source">
     <option value="tesvolt">Tesvolt EMS (direkt)</option>
     <option value="datamanager">SMA Data Manager (ennexOS)</option>
+    <option value="solis">Solis EMS</option>
   </select>
   <small>Bestimmt, welche Quellregister auf der Status-Seite angezeigt werden.</small><br><br>
   <div class="dev-row">Tesvolt EMS IP: <input id="ip_ems_t" type="text">
@@ -58,6 +59,9 @@
   <div class="dev-row">SMA Datamanager IP (EMS): <input id="ip_dm" type="text">
     Unit-ID: <input id="unit_dm" type="number" value="2" style="width:50px">
     <small>Unit-ID 2 = Anlage, 1 = nur Produktinfo (EDMx-Modbus-TI-de-16)</small></div>
+  <div class="dev-row">Solis EMS IP: <input id="ip_ems_s" type="text">
+    <small>(steuerndes Solis-EMS; Registerbelegung noch nicht hinterlegt -
+    Direktlesung folgt nach Klaerung der Solis-EMS-Modbus-Doku)</small></div>
 </div>
 
 <div>
@@ -281,7 +285,7 @@ function loadConfig() {
     .catch(function () {});
 
   ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b", "sim",
-   "ip_dm", "ip_sma", "ip_ems_t", "ems_source", "unit_dm",
+   "ip_dm", "ip_sma", "ip_ems_t", "ip_ems_s", "ems_source", "unit_dm",
    "en_t", "en_b", "en_sma",
    "grid_max_chg", "grid_max_dis", "grid_use_ems"].forEach(function (name) {
     fetch("/cgi-bin/get_param.cgi?name=" + name)
@@ -296,6 +300,7 @@ function loadConfig() {
         if (name === "ip_dm") document.getElementById("ip_dm").value = v;
         if (name === "ip_sma") document.getElementById("ip_sma").value = v;
         if (name === "ip_ems_t") document.getElementById("ip_ems_t").value = v;
+        if (name === "ip_ems_s") document.getElementById("ip_ems_s").value = v;
         if (name === "ems_source" && v) document.getElementById("ems_source").value = v;
         if (name === "unit_dm" && v) document.getElementById("unit_dm").value = v;
         if (name === "sim") document.getElementById("sim_mode").checked = (v === "1");
@@ -321,6 +326,7 @@ function saveConfig() {
   var ipDm  = document.getElementById("ip_dm").value;
   var ipSma = document.getElementById("ip_sma").value;
   var ipEmsT = document.getElementById("ip_ems_t").value;
+  var ipEmsS = document.getElementById("ip_ems_s").value;
   var src   = document.getElementById("ems_source").value;
   var uDm   = document.getElementById("unit_dm").value;
   var sim   = document.getElementById("sim_mode").checked ? "1" : "0";
@@ -338,7 +344,7 @@ function saveConfig() {
     fetch("/cgi-bin/set_ips.cgi?ip_t=" + ipT + "&ip_b=" + ipB +
           "&en_t=" + enT + "&en_b=" + enB + "&en_sma=" + enSma).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_ems.cgi?source=" + src + "&ip_dm=" + ipDm + "&ip_sma=" + ipSma +
-          "&unit_dm=" + uDm + "&ip_ems_t=" + ipEmsT).then(function (r) { return r.text(); }),
+          "&unit_dm=" + uDm + "&ip_ems_t=" + ipEmsT + "&ip_ems_s=" + ipEmsS).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_sim.cgi?sim=" + sim).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms).then(function (r) { return r.text(); })
   ])
