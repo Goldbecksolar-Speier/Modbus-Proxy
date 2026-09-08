@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>EMS-Proxy - Modbus-Sniffer</title>
+<style>
+ body { font-family: sans-serif; background:#10141a; color:#dde3ea; margin:0; padding:16px; }
+ h1 { font-size:1.3em; margin:0 0 4px 0; }
+ .sub { color:#8a94a3; font-size:0.85em; margin-bottom:14px; }
+ a { color:#5aa9ff; }
+ .box { background:#1a2029; border:1px solid #2a3342; border-radius:8px; padding:12px 14px; margin-bottom:14px; }
+ .warnbox { border-color:#7a5c1e; background:#241d10; }
+ .infobox { border-color:#1e4a6e; background:#101c26; }
+ .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+ button { background:#2563eb; color:#fff; border:0; border-radius:6px; padding:8px 16px; cursor:pointer; font-size:0.95em; }
+ button:disabled { background:#3a4454; cursor:default; }
+ button.stop { background:#b91c1c; }
+ select { background:#0e1218; color:#dde3ea; border:1px solid #2a3342; border-radius:6px; padding:7px; }
+ #state { font-weight:bold; }
+ .st-idle { color:#8a94a3; } .st-run { color:#eab308; } .st-done { color:#22c55e; } .st-err { color:#ef4444; }
+ table { border-collapse:collapse; width:100%; font-size:0.85em; margin-top:8px; }
+ th, td { border:1px solid #2a3342; padding:4px 8px; text-align:left; white-space:nowrap; }
+ th { background:#1a2029; color:#8a94a3; position:sticky; top:0; }
+ tr.w td { color:#ff6b6b; font-weight:bold; }
+ tr.x td { color:#eab308; }
+ .tablewrap { max-height:480px; overflow:auto; border:1px solid #2a3342; border-radius:6px; }
+ code, pre { background:#0e1218; border-radius:4px; padding:1px 5px; font-size:0.9em; color:#a8e0a2; }
+ pre { padding:10px; overflow-x:auto; line-height:1.5; }
+ .legend span { margin-right:14px; font-size:0.85em; }
+ ul { margin:6px 0; padding-left:20px; }
+ li { margin:3px 0; }
+</style>
+</head>
+<body>
+
+<h1>Modbus-Sniffer (passiv)</h1>
+<div class="sub">
+  Liest Modbus-TCP-Verkehr (Port 502) auf br-lan mit - greift NICHT ein, verhindert nichts.
+  &nbsp;|&nbsp; <a href="devices.html">Geraete</a> &nbsp;|&nbsp; <a href="status.html">Status</a> &nbsp;|&nbsp; <a href="setup.html">Setup</a>
+</div>
+
+<div class="box">
+  <div class="row">
+    <label>Dauer:
+      <select id="dur">
+        <option value="30">30 s</option>
+        <option value="60" selected>60 s</option>
+        <option value="120">120 s</option>
+        <option value="300">300 s</option>
+      </select>
+    </label>
+    <button id="startbtn" onclick="startCap()">Capture starten</button>
+    <button id="stopbtn" class="stop" onclick="stopCap()" disabled>Stopp</button>
+    <span>Status: <span id="state" class="st-idle">-</span></span>
+  </div>
+  <div class="legend" style="margin-top:8px;">
+    <span style="color:#ff6b6b;">&#9632; Schreibbefehl (FC 5/6/15/16)</span>
+    <span style="color:#eab308;">&#9632; Exception-Antwort</span>
+    <span style="color:#dde3ea;">&#9632; Lese-Request / Antwort</span>
+  </div>
+</div>
+
+<div id="msg"></div>
+
+<div class="tablewrap" id="tablewrap" style="display:none;">
+  <table id="tbl">
+    <thead>
+      <tr><th>Zeit</th><th>Quelle</th><th>Ziel</th><th>Unit</th><th>FC</th><th>Typ</th><th>Info</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<div class="box warnbox" style="margin-top:14px;">
+  <b>Was der Router OHNE Port-Mirroring sieht:</b>
+  <ul>
+    <li>&#10003; Verkehr von/zu den eigenen Diensten des Routers (Proxy, Geraete-Poller)</li>
+    <li>&#10003; Verkehr, der ueber den Router geroutet wird (z.B. Geraet &#8594; Internet/Cloud via NAT)</li>
+    <li>&#10007; LAN-zu-LAN-Verkehr FREMDER Geraete (z.B. Tesvolt EMS &#8594; Wechselrichter direkt):
+        der Switch-Chip leitet solche Pakete direkt weiter, die Router-CPU (und damit tcpdump)
+        sieht davon NICHTS.</li>
+  </ul>
+  Fuer die volle Sicht auf den Bus-Verkehr muss Port-Mirroring aktiviert werden (siehe unten).
+</div>
+
+<div class="box infobox">
+  <b>Port-Mirroring am RUTX11 einrichten (per SSH als root)</b>
+  <p style="margin:6px 0;">
+    Der RUTX11 hat einen internen Switch-Chip. Mit Mirroring wird der Verkehr eines
+    LAN-Ports zusaetzlich an die Router-CPU kopiert - erst dann sieht der Sniffer auch
+    den direkten Verkehr fremder Geraete an diesem Port.
+  </p>
+  <p style="margin:6px 0;"><b>1. Portbelegung anzeigen</b> (welche Nummer hat welcher LAN-Port?):</p>
+  <pre>swconfig dev switch0 show | grep -i port</pre>
+  <p style="margin:6px 0;"><b>2. Mirroring aktivieren</b> - Beispiel: Geraet haengt an Switch-Port 2,
+     Kopie geht an Port 0 (CPU-Port, dort lauscht tcpdump):</p>
+  <pre>swconfig dev switch0 set enable_mirror_rx 1
+swconfig dev switch0 set enable_mirror_tx 1
+swconfig dev switch0 set mirror_monitor_port 0
+swconfig dev switch0 set mirror_source_port 2</pre>
+  <p style="margin:6px 0;"><b>3. Nach der Analyse wieder ausschalten</b> (Mirroring kostet CPU/Durchsatz):</p>
+  <pre>swconfig dev switch0 set enable_mirror_rx 0
+swconfig dev switch0 set enable_mirror_tx 0</pre>
+  <ul>
+    <li>Die Einstellung ist NICHT reboot-fest - ein Neustart des Routers loescht sie (gewollt, als Sicherheitsnetz).</li>
+    <li><code>mirror_monitor_port 0</code> = CPU-Port; die genaue Nummerierung mit Schritt 1 pruefen
+        (kann je Firmware abweichen - im Zweifel <code>swconfig dev switch0 help</code>).</li>
+    <li>Es kann immer nur EIN Quellport gespiegelt werden - fuer mehrere Geraete den
+        <code>mirror_source_port</code> nacheinander umsetzen und je ein Capture fahren.</li>
+    <li>Voraussetzung fuer den Sniffer: <code>tcpdump</code> installiert
+        (<code>opkg update; opkg install tcpdump</code>) - die Statusanzeige meldet es, falls es fehlt.</li>
+  </ul>
+</div>
+
+<script>
+"use strict";
+var pollTimer = null;
+
+function setState(txt, cls) {
+  var el = document.getElementById("state");
+  el.textContent = txt;
+  el.className = cls;
+}
+
+function setMsg(html) { document.getElementById("msg").innerHTML = html; }
+
+function startCap() {
+  var dur = document.getElementById("dur").value;
+  document.getElementById("startbtn").disabled = true;
+  fetch("cgi-bin/sniff_ctl.cgi?cmd=start&dur=" + encodeURIComponent(dur) + "&_=" + Date.now())
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      t = t.trim();
+      if (t.indexOf("OK:") === 0) {
+        setMsg("");
+        document.getElementById("stopbtn").disabled = false;
+        setState("angefordert...", "st-run");
+        startPolling();
+      } else {
+        setMsg('<div class="box warnbox">' + t + '</div>');
+        document.getElementById("startbtn").disabled = false;
+      }
+    })
+    .catch(function(e){
+      setMsg('<div class="box warnbox">Fehler: ' + e + '</div>');
+      document.getElementById("startbtn").disabled = false;
+    });
+}
+
+function stopCap() {
+  fetch("cgi-bin/sniff_ctl.cgi?cmd=stop&_=" + Date.now());
+}
+
+function startPolling() {
+  if (pollTimer) { clearInterval(pollTimer); }
+  pollTimer = setInterval(pollStatus, 2000);
+}
+
+function pollStatus() {
+  fetch("cgi-bin/sniff_ctl.cgi?cmd=status&_=" + Date.now())
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      t = t.trim();
+      if (t.indexOf("RUNNING") === 0) {
+        var parts = t.split(":");
+        var start = parseInt(parts[1], 10) || 0;
+        var dur   = parseInt(parts[2], 10) || 0;
+        var left  = dur - (Math.floor(Date.now() / 1000) - start);
+        if (left < 0) { left = 0; }
+        setState("Capture laeuft - noch ~" + left + " s", "st-run");
+      } else if (t.indexOf("DONE") === 0) {
+        setState("fertig", "st-done");
+        clearInterval(pollTimer); pollTimer = null;
+        document.getElementById("startbtn").disabled = false;
+        document.getElementById("stopbtn").disabled = true;
+        loadResult();
+      } else if (t.indexOf("ERROR") === 0) {
+        setState("FEHLER", "st-err");
+        setMsg('<div class="box warnbox">' + t + '</div>');
+        clearInterval(pollTimer); pollTimer = null;
+        document.getElementById("startbtn").disabled = false;
+        document.getElementById("stopbtn").disabled = true;
+      } else {
+        setState("wartet auf Watchdog...", "st-run");
+      }
+    });
+}
+
+function loadResult() {
+  fetch("cgi-bin/sniff_ctl.cgi?cmd=result&_=" + Date.now())
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      var lines = t.split("\n");
+      var tbody = document.getElementById("tbody");
+      tbody.innerHTML = "";
+      var n = 0;
+      for (var i = 0; i < lines.length; i++) {
+        var ln = lines[i].trim();
+        if (!ln || ln.charAt(0) === "#" || ln.indexOf("ERR") === 0) { continue; }
+        var c = ln.split("|");
+        if (c.length < 7) { continue; }
+        var tr = document.createElement("tr");
+        if (c[5] === "W") { tr.className = "w"; }
+        else if (c[5] === "X") { tr.className = "x"; }
+        var typTxt = {R:"Lesen", W:"SCHREIBEN", A:"Antwort", X:"EXCEPTION"}[c[5]] || c[5];
+        var cells = [c[0], c[1], c[2], c[3], c[4], typTxt, c[6]];
+        for (var j = 0; j < cells.length; j++) {
+          var td = document.createElement("td");
+          td.textContent = cells[j];
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+        n++;
+      }
+      document.getElementById("tablewrap").style.display = "block";
+      var cm = t.match(/#COUNT=(\d+)/);
+      var total = cm ? cm[1] : n;
+      setMsg('<div class="box">' + total + " Modbus-Paket(e) erfasst" +
+             (n === 0 ? " - kein Verkehr auf Port 502 gesehen (ggf. Port-Mirroring noetig, s.u.)" : "") +
+             "</div>");
+    });
+}
+
+// Beim Laden: falls schon ein Ergebnis/laufendes Capture existiert, anzeigen
+pollStatus();
+fetch("cgi-bin/sniff_ctl.cgi?cmd=status&_=" + Date.now())
+  .then(function(r){ return r.text(); })
+  .then(function(t){
+    if (t.indexOf("RUNNING") === 0) { document.getElementById("stopbtn").disabled = false; startPolling(); }
+    else if (t.indexOf("DONE") === 0) { loadResult(); }
+  });
+</script>
+</body>
+</html>
