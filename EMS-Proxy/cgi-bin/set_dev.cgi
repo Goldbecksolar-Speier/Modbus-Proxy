@@ -37,7 +37,9 @@ case "$Q" in
     fi
     exit 0 ;;
   *mon=*)
-    V=$(getp mon | tr -cd 'A-Za-z0-9_,' | cut -c1-500)
+    # %2C (URL-kodiertes Komma) defensiv dekodieren, sonst verstuemmelt
+    # der Whitelist-Filter die Liste zu "key12Ckey2"
+    V=$(getp mon | sed 's/%2C/,/g; s/%2c/,/g' | tr -cd 'A-Za-z0-9_,' | cut -c1-500)
     F="/etc/tesvolt_dev${SLOT}_mon"
     if [ -f "$F" ] && echo "$V" 2>/dev/null > "$F"; then
       echo "OK slot=$SLOT mon=$V"
