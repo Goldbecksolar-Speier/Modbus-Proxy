@@ -541,7 +541,9 @@ function slotmonRefresh() {
 
 // ---------------- Tachos (Netz, Speicher gesamt, Einzelspeicher) ----------------
 // Generische Halbkreis-Tachos: LINKS = negativer Wert, RECHTS = positiver Wert.
-// g1/g2: Wert aus dem Slot-Monitoring (slotmon_vals), per Klick konfigurierbar
+// g1/g2: Wert aus Slot-Monitoring (slotmon_vals), EMS-Proxy-Registern
+//        (state, Schluessel "ems:<reg>") oder EMS-Direktlesung (src_vals,
+//        Schluessel "dm:<addr>"/"tv:<addr>"), per Klick konfigurierbar
 //        (Messwert, Skala, Einheit, Invert; localStorage pro Tacho).
 // g3/g4: Einzelspeicher Tesvolt/BLUESUN - FEST aus den Proxy-Registern
 //        30005/30015 (signed W), nur im Split Mode sichtbar; per Klick nur
@@ -563,6 +565,9 @@ var GAUGE_DEFS = [
     neg: "Laden", pos: "Entladen", markers: true }
 ];
 var gauge_cfgs = {};   // id -> cfg oder null
+// Direktlese-Werte der EMS-Quelle (dm_table/tv_table) fuer die Tachos:
+// src_vals["dm:30775"] = { v: Zahl, stale: bool }
+var src_vals = {};
 GAUGE_DEFS.forEach(function (d) {
   var c = null;
   try { c = JSON.parse(localStorage.getItem(d.store)); } catch (e) { c = null; }
@@ -595,13 +600,59 @@ function gaugeKw(d) {
     return { kw: kwF, stale: st.cls !== "hm-ok" };
   }
   if (!cfg) return null;
-  var e = slotmon_vals[cfg.key];
-  if (!e || e.v === undefined) return null;
-  var num = parseFloat(e.v);
-  if (isNaN(num)) return null;
+  var key = cfg.key || "";
+  var num = null, stale = false;
+  if (key.indexOf("ems:") === 0) {
+    // EMS-Proxy-Register (Port 1502, EMS_MAP/state)
+    var stE = state[parseInt(key.substring(4), 10)];
+    if (!stE || stE.num === null) return null;
+    num = stE.num;
+    stale = stE.cls !== "hm-ok";
+  } else if (key.indexOf("dm:") === 0 || key.indexOf("tv:") === 0) {
+    // EMS-Direktlesung (dm_table/tv_table)
+    var sv = src_vals[key];
+    if (!sv || sv.v === null || sv.v === undefined) return null;
+    num = sv.v;
+    stale = !!sv.stale;
+  } else {
+    // Slot-Monitoring
+    var e = slotmon_vals[key];
+    if (!e || e.v === undefined) return null;
+    num = parseFloat(e.v);
+    if (isNaN(num)) return null;
+    stale = e.stale;
+  }
   if (cfg.unit === "W") num = num / 1000;
   if (cfg.inv) num = -num;
-  return { kw: num, stale: e.stale };
+  return { kw: num, stale: stale };
+}
+
+// Anzeigename einer Tacho-Quelle (Slot-Monitoring, EMS-Register, Direktlesung)
+function gaugeSrcLabel(key) {
+  if (!key) return "";
+  var i;
+  if (key.indexOf("ems:") === 0) {
+    var reg = parseInt(key.substring(4), 10);
+    for (i = 0; i < EMS_MAP.length; i++) {
+      if (EMS_MAP[i].reg === reg) return "EMS " + EMS_MAP[i].name + " (" + reg + ")";
+    }
+    return "EMS-Reg " + reg;
+  }
+  if (key.indexOf("dm:") === 0) {
+    var ad = parseInt(key.substring(3), 10);
+    for (i = 0; i < DM_MAP.length; i++) {
+      if (DM_MAP[i].addr === ad) return "DM " + DM_MAP[i].name;
+    }
+    return "DM-Reg " + ad;
+  }
+  if (key.indexOf("tv:") === 0) {
+    var at = parseInt(key.substring(3), 10);
+    for (i = 0; i < TV_MAP.length; i++) {
+      if (TV_MAP[i].addr === at) return "TV-EMS " + TV_MAP[i].name;
+    }
+    return "TV-EMS-Reg " + at;
+  }
+  return slotmon_labels[key] || key;
 }
 
 function gaugeRender(d) {
@@ -684,13 +735,13 @@ function gaugeRender(d) {
   }
   var lbl = (d.fixedReg !== undefined)
     ? ("Proxy-Reg " + d.fixedReg)
-    : (slotmon_labels[cfg.key] || cfg.key);
+    : gaugeSrcLabel(cfg.key);
   srcEl.innerText = " " + lbl;
   if (m === null) {
     valEl.innerText = "-";
     stEl.innerText = (d.fixedReg !== undefined)
       ? "kein Messwert (Proxy-Register " + d.fixedReg + ")"
-      : "kein Messwert (Slot-Monitoring pruefen: " + cfg.key + ")";
+      : "kein Messwert (Quelle pruefen: " + gaugeSrcLabel(cfg.key) + ")";
   } else {
     valEl.innerText = m.kw.toFixed(1) + " kW " + (m.kw < 0 ? d.neg : (m.kw > 0 ? d.pos : ""));
     valEl.style.color = m.kw < 0 ? "#3a9e4d" : "#e08a00";
@@ -731,16 +782,38 @@ function gaugeCfgOpen(d) {
   if (d.fixedReg === undefined) {
     var sel = document.getElementById("gauge_sel_" + d.id);
     sel.innerHTML = "";
-    var keys = Object.keys(slotmon_labels).sort();
     var msgEl = document.getElementById("gauge_cfgmsg_" + d.id);
-    msgEl.innerText = (keys.length === 0)
-      ? "Keine Werte im Slot-Monitoring - erst Geraet in Setup uebernehmen und Werte anhaken."
-      : "";
-    keys.forEach(function (k) {
-      var o = document.createElement("option");
-      o.value = k; o.text = slotmon_labels[k] + " [" + k + "]";
-      sel.appendChild(o);
-    });
+    msgEl.innerText = "";
+    var addGroup = function (label, items) {
+      if (items.length === 0) return;
+      var og = document.createElement("optgroup");
+      og.label = label;
+      items.forEach(function (it) {
+        var o = document.createElement("option");
+        o.value = it.k; o.text = it.t;
+        og.appendChild(o);
+      });
+      sel.appendChild(og);
+    };
+    addGroup("Slot-Monitoring", Object.keys(slotmon_labels).sort().map(function (k) {
+      return { k: k, t: slotmon_labels[k] + " [" + k + "]" };
+    }));
+    addGroup("EMS-Proxy-Register (Port 1502)", EMS_MAP.map(function (e) {
+      return { k: "ems:" + e.reg, t: e.name + " (" + e.reg + (e.unit ? ", " + e.unit : "") + ")" };
+    }));
+    if (dm_cfg.source === "datamanager") {
+      addGroup("EMS-Direktlesung SMA DM", DM_MAP.map(function (e) {
+        return { k: "dm:" + e.addr, t: e.name + " (" + e.addr + ")" };
+      }));
+    }
+    if (dm_cfg.source === "tesvolt") {
+      addGroup("EMS-Direktlesung Tesvolt", TV_MAP.map(function (e) {
+        return { k: "tv:" + e.addr, t: e.name + " (" + e.addr + ")" };
+      }));
+    }
+    if (sel.options.length === 0) {
+      msgEl.innerText = "Keine Werte verfuegbar - Geraet in Setup uebernehmen oder EMS-Quelle pruefen.";
+    }
     if (cfg) {
       sel.value = cfg.key;
       document.getElementById("gauge_unit_" + d.id).value = cfg.unit || "W";
@@ -761,7 +834,7 @@ function gaugeBuild(d) {
                       (d.splitOnly ? " display:none;" : "");
   var cw = d.small ? 250 : 340, ch = d.small ? 155 : 205;
   var srcRow = (d.fixedReg !== undefined) ? "" :
-    "<div style='margin-top:8px;'>Messwert (aus Slot-Monitoring):<br>" +
+    "<div style='margin-top:8px;'>Messwert (Slot-Monitoring oder EMS):<br>" +
     "<select id='gauge_sel_" + d.id + "' style='max-width:280px;'></select></div>";
   var unitSel = (d.fixedReg !== undefined) ? "" :
     " &nbsp; Einheit des Messwerts: <select id='gauge_unit_" + d.id + "'>" +
@@ -868,7 +941,7 @@ function srcReadWord(ip, unit, fc, addr) {
 
 // Generische sequenzielle Lesung einer Quell-Tabelle (dm oder tv)
 function srcReadEntry(prefix, map, ip, unit, idx) {
-  if (idx >= map.length) return;
+  if (idx >= map.length) { gaugeRenderAll(); return; }
   var e = map[idx];
   var next = function () { srcReadEntry(prefix, map, ip, unit, idx + 1); };
   srcReadWord(ip, unit, e.fc, e.addr).then(function (hiRes) {
@@ -879,15 +952,18 @@ function srcReadEntry(prefix, map, ip, unit, idx) {
       valEl.innerText = "-";
       stEl.innerText = hiRes;
       stEl.className = hiRes.indexOf("EXC:") === 0 ? "hm-warn" : "hm-err";
+      if (src_vals[prefix + ":" + e.addr]) src_vals[prefix + ":" + e.addr].stale = true;
       next();
       return;
     }
     var hi = parseInt(hiRes.substring(3), 10);
     if (hi < 0) hi += 65536;   // mb_cli liefert s16
     if (e.words === 1) {
-      valEl.innerText = String(e.signed && hi > 32767 ? hi - 65536 : hi) + (e.unit ? " " + e.unit : "");
+      var v1 = (e.signed && hi > 32767) ? hi - 65536 : hi;
+      valEl.innerText = String(v1) + (e.unit ? " " + e.unit : "");
       stEl.innerText = "OK";
       stEl.className = "hm-ok";
+      src_vals[prefix + ":" + e.addr] = { v: v1, stale: false };
       next();
       return;
     }
@@ -896,6 +972,7 @@ function srcReadEntry(prefix, map, ip, unit, idx) {
         valEl.innerText = "-";
         stEl.innerText = loRes;
         stEl.className = loRes.indexOf("EXC:") === 0 ? "hm-warn" : "hm-err";
+        if (src_vals[prefix + ":" + e.addr]) src_vals[prefix + ":" + e.addr].stale = true;
         next();
         return;
       }
@@ -908,10 +985,12 @@ function srcReadEntry(prefix, map, ip, unit, idx) {
         valEl.innerText = "NaN";
         stEl.innerText = "kein Messwert (SMA NaN)";
         stEl.className = "hm-warn";
+        if (src_vals[prefix + ":" + e.addr]) src_vals[prefix + ":" + e.addr].stale = true;
       } else {
         valEl.innerText = v + (e.unit ? " " + e.unit : "");
         stEl.innerText = "OK";
         stEl.className = "hm-ok";
+        src_vals[prefix + ":" + e.addr] = { v: v, stale: false };
       }
       next();
     });
