@@ -13,6 +13,12 @@
 --  * P: L1+L2+L3 ~ Psum (124,2 ~ 128,3 W) -> intern konsistent
 --  * Unit-ID 1, Port 502 via devices.html/device_poll bestaetigt
 -- Plausibilitaetscheck Stroeme: I ~ P / U je Phase (bei cos phi ~1).
+--
+-- BLOCK-READ (2026-09-08, analog Solis): Einzelreads erzeugten 10
+-- TCP-Verbindungen je Poll (Sniffer-Capture). Alle Punkte liegen im
+-- zusammenhaengenden Float-Block 19000..19027 -> EIN Bereichs-Read
+-- (28 Register) deckt alles ab; 19006..19011 / 19018..19019 werden
+-- mitgelesen und ignoriert (billiger als 10 Verbindungen).
 -- =====================================================================
 
 return {
@@ -22,6 +28,13 @@ return {
   unit_id      = 1,        -- am Geraet bestaetigt (2026-09-06)
   min_gap_ms   = 100,
   has_watchdog = true,     -- irrelevant, read-only
+
+  -- Bereichs-Read: Punkte werden aus diesem Block dekodiert
+  -- (device_poll: read_ranges/point_from_cache). Punkte ausserhalb
+  -- fallen automatisch auf Einzelreads zurueck.
+  read_blocks = {
+    { fc = 3, addr = 19000, count = 28 },  -- 19000..19027: U/I/P je Phase + Psum
+  },
 
   read = {
     u_l1n = { addr = 19000, fc = 3, type = "f32be", scale = 1, unit = "V" },  -- Spannung L1-N
