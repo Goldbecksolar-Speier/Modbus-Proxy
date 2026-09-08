@@ -192,6 +192,12 @@ sniff_tick() {
     echo "RUNNING:$(date +%s):$DUR" > /tmp/emsproxy_sniff_state
     chmod 644 /tmp/emsproxy_sniff_state
     logmsg "Sniffer: Capture gestartet (Port 502, ${DUR}s, br-lan)"
+    # Sofort-Poll anfordern (gleicher Marker wie die "Jetzt pollen"-
+    # Taste): damit faellt garantiert mindestens ein Geraeteslot-Poll
+    # ins Capture-Fenster - sonst zeigt ein kurzes Capture bei langem
+    # Poll-Intervall (bis 3600 s) womoeglich gar keinen Verkehr.
+    # Abholung im naechsten 5-s-Tick durch device_poll_tick (FORCE=1).
+    touch /tmp/emsproxy_poll_req 2>/dev/null
     (
         rm -f /tmp/emsproxy_sniff.pcap /tmp/emsproxy_sniff_stop
         tcpdump -i br-lan -nn -s 128 -c 2000 -w /tmp/emsproxy_sniff.pcap port 502 2>/tmp/emsproxy_sniff_err &
