@@ -212,6 +212,19 @@
 
 </div>
 
+<!-- ================= SLOT-MONITORING: gewaehlte Werte aus den Geraete-Slots ================= -->
+<div class="panel" id="slotmon_panel" style="margin-top:24px; display:none;">
+  <h3>Slot-Monitoring (aus Geraete-Slots uebernommen)</h3>
+  <div style="font-size:12px;color:#666;margin-bottom:6px;">
+    Werte aus dem Watchdog-Poll der Geraete-Slots (kein zusaetzlicher Modbus-Verkehr).
+    Geraete werden auf der Seite Geraete-Slots uebernommen, die Wert-Auswahl erfolgt in Setup.
+  </div>
+  <table id="slotmon_table">
+    <thead><tr><th>Slot</th><th>Geraet</th><th>Wert</th><th>Messwert</th><th>Stand</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
 <!-- ================= VERLAUFSKURVEN: 24 h in 5-min-Schritten ================= -->
 <div class="panel hist-panel">
   <h3>Verlauf (24 h, 5-min-Raster)<span class="src-tag" id="hist_src"></span> <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
@@ -335,6 +348,86 @@ function buildTable() {
       "<td id='ok_" + e.reg + "'>-</td>";
     tbody.appendChild(tr);
   });
+}
+
+// ---------------- Slot-Monitoring (Pipeline Geraete-Slots -> Setup -> Status) ----------------
+// Zeigt fuer Slots mit insetup=1 und nicht-leerer mon-Liste NUR die in
+// setup.html gewaehlten Werte. Quelle: /tmp-Statusdateien des Watchdog-Polls
+// via read_dev.cgi - KEIN zusaetzlicher Modbus-Verkehr.
+var SLOTMON_NSLOTS = 4;
+
+function slotmonParse(t) {
+  var kv = {};
+  t.split("\n").forEach(function (line) {
+    var i = line.indexOf("=");
+    if (i < 0) return;
+    kv[line.substring(0, i)] = line.substring(i + 1).trim();
+  });
+  return kv;
+}
+
+function slotmonRefresh() {
+  var rowsBySlot = {};
+  var pending = SLOTMON_NSLOTS;
+  function done() {
+    pending--;
+    if (pending > 0) return;
+    var tbody = document.querySelector("#slotmon_table tbody");
+    var panel = document.getElementById("slotmon_panel");
+    var html = "", anyRow = false;
+    for (var n = 1; n <= SLOTMON_NSLOTS; n++) {
+      if (rowsBySlot[n]) { html += rowsBySlot[n]; anyRow = true; }
+    }
+    if (anyRow) {
+      tbody.innerHTML = html;
+      panel.style.display = "";
+    } else {
+      panel.style.display = "none";
+    }
+  }
+  for (var n = 1; n <= SLOTMON_NSLOTS; n++) {
+    (function (n) {
+      fetch("/cgi-bin/read_dev.cgi?slot=" + n + "&cfg=1")
+        .then(function (r) { return r.text(); })
+        .then(function (t) {
+          var cfg = slotmonParse(t);
+          var mon = (cfg.mon || "").split(",").filter(function (k) { return k !== ""; });
+          if (cfg.insetup !== "1" || mon.length === 0) { done(); return; }
+          fetch("/cgi-bin/read_dev.cgi?slot=" + n)
+            .then(function (r) { return r.text(); })
+            .then(function (st) {
+              st = st.trim();
+              var label = (cfg.name || cfg.profile || ("Slot " + n));
+              var rows = "";
+              if (st === "NOSTATUS" || st === "") {
+                rows = "<tr><td>" + n + "</td><td>" + label +
+                       "</td><td colspan='3' class='hm-stale'>noch kein Poll-Ergebnis</td></tr>";
+              } else {
+                var kv = slotmonParse(st);
+                var age = kv.ts ? Math.round(Date.now() / 1000 - parseInt(kv.ts, 10)) : null;
+                var ageTxt = (age === null) ? "-" : (age < 120 ? age + " s" : Math.round(age / 60) + " min");
+                var stale = (age !== null && age > 300);
+                mon.forEach(function (k, i) {
+                  var v = kv[k];
+                  var cls = (v === undefined) ? "hm-stale" : (stale ? "hm-warn" : "hm-ok");
+                  rows += "<tr>" +
+                    (i === 0 ? "<td rowspan='" + mon.length + "'>" + n + "</td>" +
+                               "<td rowspan='" + mon.length + "'>" + label +
+                               " <small>(" + (kv.profile || "?") + ")</small></td>" : "") +
+                    "<td>" + k + "</td>" +
+                    "<td class='val'>" + (v === undefined ? "-" : v) + "</td>" +
+                    "<td class='" + cls + "'>" + (v === undefined ? "Wert fehlt im Poll" : ageTxt) + "</td>" +
+                    "</tr>";
+                });
+              }
+              rowsBySlot[n] = rows;
+              done();
+            })
+            .catch(function () { done(); });
+        })
+        .catch(function () { done(); });
+    })(n);
+  }
 }
 
 // ---------------- Direktlesung EMS-Quelle (generisch fuer DM + Tesvolt) ----------------
@@ -873,6 +966,7 @@ function refresh() {
   loadMode().then(function () {
     loadParams();
     loadEmsSource();
+    slotmonRefresh();
     readAll(0);
   });
 }
