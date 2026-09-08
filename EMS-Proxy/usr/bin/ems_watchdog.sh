@@ -9,7 +9,12 @@
 #  * Failsafe: nach 3 BLUESUN-Fehlern -> passthrough + BLUESUN Standby
 #    (UDAN-EMS Steuerblock 0x1501=3 / 0x1502=0; Herstellerfreigabe
 #    2026-09-04 - das UDAN-EMS hat KEINEN eigenen Watchdog!)
-#  * Geraeteslots (Profil-Loader): periodischer read-only Poll (60 s)
+#  * Geraeteslots (Profil-Loader): periodischer read-only Poll;
+#    Intervall konfigurierbar ueber /etc/tesvolt_dev_poll_interval
+#    (Sekunden, Default 60, Min 10, Max 3600) - wird bei JEDEM Tick
+#    frisch gelesen, Aenderung wirkt ohne Neustart. Wichtig, wenn
+#    mehrere Master (Cloud, EMS) dieselben Geraete abfragen: laengeres
+#    Intervall = weniger Kollisionen (z.B. Kaco NX3, Solis-Cloud).
 #  * repariert fehlende Konfigdateien
 #  * einfache Logrotation (max. 500 kB)
 #  * kill per PID statt killall (sauberer auf BusyBox)
@@ -84,9 +89,18 @@ failsafe() {
 # Muss im Watchdog laufen: CGIs laufen als uhttpd und duerfen wegen
 # Sticky-Bit in /tmp keine root-eigenen Statusdateien ersetzen.
 # Laeuft AUCH bei gestopptem Proxy (Standorte ohne Steuerung, Phase 1).
+# Intervall aus /etc/tesvolt_dev_poll_interval (Setup ueber devices.html)
+# - bei jedem Tick frisch gelesen, geclampt auf 10..3600 s, Default 60.
 # ---------------------------------------------------------------------
 DEV_LAST_POLL=0
-DEV_POLL_INTERVAL=60
+
+dev_poll_interval() {
+    I=$(cat /etc/tesvolt_dev_poll_interval 2>/dev/null | tr -cd '0-9')
+    [ -z "$I" ] && I=60
+    [ "$I" -lt 10 ] && I=10
+    [ "$I" -gt 3600 ] && I=3600
+    echo "$I"
+}
 
 device_poll_tick() {
     # Konfigaenderung (set_dev.cgi): Scan-Cache + Status verwerfen
@@ -101,7 +115,8 @@ device_poll_tick() {
     NOW=$(date +%s)
     FORCE=0
     [ -f /tmp/emsproxy_poll_req ] && FORCE=1
-    if [ "$FORCE" = "0" ] && [ $((NOW - DEV_LAST_POLL)) -lt "$DEV_POLL_INTERVAL" ]; then
+    DPI=$(dev_poll_interval)
+    if [ "$FORCE" = "0" ] && [ $((NOW - DEV_LAST_POLL)) -lt "$DPI" ]; then
         return
     fi
     ANY=0
