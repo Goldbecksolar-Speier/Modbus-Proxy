@@ -104,6 +104,11 @@
 </div>
 <div class="cfg" id="cfg_display"></div>
 
+<!-- ================= TACHOS: Netzleistung + Speicher-Ladeleistung (ganz oben) ================= -->
+<div class="panel" id="gauges_panel" style="margin-bottom:16px;">
+  <div id="gauges_wrap" style="display:flex; align-items:flex-start; gap:30px; flex-wrap:wrap;"></div>
+</div>
+
 <!-- ============ EMS-Quelle: SMA Data Manager (nur sichtbar wenn Quelle=datamanager) ============ -->
 <div class="panel" id="dm_panel" style="display:none; margin-bottom:16px;">
   <h3>EMS-Quelle: SMA Data Manager (Direktlesung, am Proxy vorbei)</h3>
@@ -225,37 +230,6 @@
     <thead><tr><th>Slot</th><th>Geraet</th><th>Wert</th><th>Messwert</th><th>Stand</th><th>Verlauf</th></tr></thead>
     <tbody></tbody>
   </table>
-</div>
-
-<!-- ================= NETZLEISTUNGS-TACHO ================= -->
-<div class="panel" id="gauge_panel" style="margin-top:24px;">
-  <h3>Netzleistung<span class="src-tag" id="gauge_src"></span></h3>
-  <div style="display:flex; align-items:flex-start; gap:24px; flex-wrap:wrap;">
-    <div>
-      <canvas id="gauge_canvas" width="340" height="205" style="cursor:pointer;"
-              title="Klicken: Messwert und Skala waehlen"></canvas>
-      <div id="gauge_value" style="text-align:center; font-size:22px; font-weight:bold;">-</div>
-      <div id="gauge_state" style="text-align:center; font-size:12px; color:#666;">
-        Tacho anklicken: Messwert und Skala waehlen</div>
-    </div>
-    <div id="gauge_cfgbox" style="display:none; border:1px solid #ccc; border-radius:6px;
-         padding:12px; font-size:13px; min-width:280px; background:#fafafa;">
-      <b>Tacho-Konfiguration</b>
-      <div style="margin-top:8px;">Messwert (aus Slot-Monitoring):<br>
-        <select id="gauge_sel" style="max-width:280px;"></select></div>
-      <div style="margin-top:8px;">Skala +/- <input id="gauge_max" size="5" value="200"> kW
-        &nbsp; Einheit des Messwerts:
-        <select id="gauge_unit"><option value="W">W</option><option value="kW">kW</option></select></div>
-      <div style="margin-top:8px;"><label><input type="checkbox" id="gauge_inv">
-        Vorzeichen umkehren (falls Einspeisung rechts erscheint)</label></div>
-      <div style="margin-top:10px;">
-        <button id="gauge_save">Uebernehmen</button>
-        <button id="gauge_cancel">Abbrechen</button>
-        <button id="gauge_clear" style="color:#c62828;">Tacho zuruecksetzen</button>
-      </div>
-      <div id="gauge_cfgmsg" style="margin-top:6px; color:#c62828;"></div>
-    </div>
-  </div>
 </div>
 
 <!-- ================= VERLAUFSKURVEN: 24 h in 5-min-Schritten ================= -->
@@ -502,7 +476,7 @@ function slotmonRefresh() {
     }
     histSave();
     renderSlotmonHistoryAll();
-    gaugeRender();
+    gaugeRenderAll();
   }
   for (var n = 1; n <= SLOTMON_NSLOTS; n++) {
     (function (n) {
@@ -565,39 +539,54 @@ function slotmonRefresh() {
   }
 }
 
-// ---------------- Netzleistungs-Tacho ----------------
-// Halbkreis-Tacho: LINKS = Einspeisung (negativ), RECHTS = Bezug (positiv).
-// Datenquelle: ein Wert aus dem Slot-Monitoring (slotmon_vals, kein extra
-// Modbus-Verkehr). Konfiguration per Klick aufs Tacho, gespeichert im
-// Browser (localStorage ems_gauge_v1: key, max kW, Einheit W/kW, invert).
-var GAUGE_KEY = "ems_gauge_v1";
-var gauge_cfg = null;
-try { gauge_cfg = JSON.parse(localStorage.getItem(GAUGE_KEY)); } catch (e) { gauge_cfg = null; }
-if (gauge_cfg && !gauge_cfg.key) gauge_cfg = null;
+// ---------------- Tachos (Netzleistung + Speicher-Ladeleistung) ----------------
+// Generische Halbkreis-Tachos: LINKS = negativer Wert, RECHTS = positiver Wert.
+// Datenquelle: je ein Wert aus dem Slot-Monitoring (slotmon_vals, kein extra
+// Modbus-Verkehr). Konfiguration per Klick aufs Tacho; Speicherung im Browser
+// (localStorage, pro Tacho eigener Schluessel: key, max kW, Einheit W/kW, invert).
+// Der Speicher-Tacho zeigt zusaetzlich die Netzanschluss-Grenzwerte aus dem
+// Setup (grid_max_chg/grid_max_dis) als ROTE Marker auf der Skala.
+var GAUGE_DEFS = [
+  { id: "g1", title: "Netzleistung", store: "ems_gauge_v1",
+    neg: "Einspeisung", pos: "Bezug", markers: false },
+  { id: "g2", title: "Speicher-Ladeleistung", store: "ems_gauge_bat_v1",
+    neg: "Laden", pos: "Entladen", markers: true }
+];
+var gauge_cfgs = {};   // id -> cfg oder null
+GAUGE_DEFS.forEach(function (d) {
+  var c = null;
+  try { c = JSON.parse(localStorage.getItem(d.store)); } catch (e) { c = null; }
+  if (c && !c.key) c = null;
+  gauge_cfgs[d.id] = c;
+});
+// Netzanschluss-Grenzwerte aus dem Setup (kW) - fuer die Marker auf dem Speicher-Tacho
+var grid_limits = { chg: null, dis: null };
 
-function gaugeKw() {
-  // aktueller Messwert in kW (Vorzeichen: + = Bezug) oder null
-  if (!gauge_cfg) return null;
-  var e = slotmon_vals[gauge_cfg.key];
+function gaugeKw(d) {
+  // aktueller Messwert in kW oder null
+  var cfg = gauge_cfgs[d.id];
+  if (!cfg) return null;
+  var e = slotmon_vals[cfg.key];
   if (!e || e.v === undefined) return null;
   var num = parseFloat(e.v);
   if (isNaN(num)) return null;
-  if (gauge_cfg.unit === "W") num = num / 1000;
-  if (gauge_cfg.inv) num = -num;
+  if (cfg.unit === "W") num = num / 1000;
+  if (cfg.inv) num = -num;
   return { kw: num, stale: e.stale };
 }
 
-function gaugeRender() {
-  var cv = document.getElementById("gauge_canvas");
+function gaugeRender(d) {
+  var cv = document.getElementById("gauge_canvas_" + d.id);
   if (!cv || !cv.getContext) return;
+  var cfg = gauge_cfgs[d.id];
   var ctx = cv.getContext("2d");
   var W = cv.width, H = cv.height;
   var cx = W / 2, cy = H - 25, R = 130;
-  var max = (gauge_cfg && gauge_cfg.max > 0) ? gauge_cfg.max : 200;
-  var m = gaugeKw();
+  var max = (cfg && cfg.max > 0) ? cfg.max : 200;
+  var m = gaugeKw(d);
   ctx.clearRect(0, 0, W, H);
 
-  // Farbzonen: links gruen (Einspeisung), rechts orange (Bezug)
+  // Farbzonen: links gruen (neg), rechts orange (pos)
   ctx.lineWidth = 16;
   ctx.strokeStyle = "#3a9e4d";
   ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 1.5 * Math.PI); ctx.stroke();
@@ -617,8 +606,26 @@ function gaugeRender() {
     ctx.fillText(t, lx, ly);
   });
   ctx.font = "bold 12px Arial";
-  ctx.fillStyle = "#3a9e4d"; ctx.fillText("Einspeisung", cx - R + 20, cy - 18);
-  ctx.fillStyle = "#e08a00"; ctx.fillText("Bezug", cx + R - 25, cy - 18);
+  ctx.fillStyle = "#3a9e4d"; ctx.fillText(d.neg, cx - R + 20, cy - 18);
+  ctx.fillStyle = "#e08a00"; ctx.fillText(d.pos, cx + R - 25, cy - 18);
+
+  // Limit-Marker (Setup grid_max_chg links = Laden, grid_max_dis rechts = Entladen)
+  if (d.markers) {
+    var marks = [];
+    if (grid_limits.chg !== null) marks.push({ f: -grid_limits.chg / max });
+    if (grid_limits.dis !== null) marks.push({ f: grid_limits.dis / max });
+    marks.forEach(function (mk) {
+      var f = Math.max(-1, Math.min(1, mk.f));
+      var a = Math.PI + (f + 1) / 2 * Math.PI;
+      ctx.strokeStyle = "#c62828"; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * (R - 18), cy + Math.sin(a) * (R - 18));
+      ctx.lineTo(cx + Math.cos(a) * (R + 14), cy + Math.sin(a) * (R + 14));
+      ctx.stroke();
+      ctx.fillStyle = "#c62828"; ctx.font = "bold 10px Arial";
+      ctx.fillText("max", cx + Math.cos(a) * (R - 30), cy + Math.sin(a) * (R - 30) + 3);
+    });
+  }
 
   // Zeiger
   var frac = 0, col = "#999";
@@ -634,83 +641,127 @@ function gaugeRender() {
   ctx.beginPath(); ctx.arc(cx, cy, 7, 0, 2 * Math.PI); ctx.fill();
 
   // Wert + Statuszeile
-  var valEl = document.getElementById("gauge_value");
-  var stEl = document.getElementById("gauge_state");
-  var srcEl = document.getElementById("gauge_src");
-  if (!gauge_cfg) {
+  var valEl = document.getElementById("gauge_value_" + d.id);
+  var stEl = document.getElementById("gauge_state_" + d.id);
+  var srcEl = document.getElementById("gauge_src_" + d.id);
+  if (!cfg) {
     valEl.innerText = "-";
     stEl.innerText = "Tacho anklicken: Messwert und Skala waehlen";
     srcEl.innerText = "";
   } else {
-    var lbl = slotmon_labels[gauge_cfg.key] || gauge_cfg.key;
+    var lbl = slotmon_labels[cfg.key] || cfg.key;
     srcEl.innerText = " " + lbl;
     if (m === null) {
       valEl.innerText = "-";
-      stEl.innerText = "kein Messwert (Slot-Monitoring pruefen: " + gauge_cfg.key + ")";
+      stEl.innerText = "kein Messwert (Slot-Monitoring pruefen: " + cfg.key + ")";
     } else {
-      valEl.innerText = m.kw.toFixed(1) + " kW " + (m.kw < 0 ? "Einspeisung" : (m.kw > 0 ? "Bezug" : ""));
+      valEl.innerText = m.kw.toFixed(1) + " kW " + (m.kw < 0 ? d.neg : (m.kw > 0 ? d.pos : ""));
       valEl.style.color = m.kw < 0 ? "#3a9e4d" : "#e08a00";
+      var limTxt = "";
+      if (d.markers && (grid_limits.chg !== null || grid_limits.dis !== null)) {
+        limTxt = " - Limits " +
+          (grid_limits.chg !== null ? grid_limits.chg + " kW Laden" : "?") + " / " +
+          (grid_limits.dis !== null ? grid_limits.dis + " kW Entladen" : "?");
+      }
       stEl.innerText = (m.stale ? "WERT VERALTET (> 5 min) - " : "") +
-        "Skala +/-" + max + " kW - anklicken zum Aendern";
+        "Skala +/-" + max + " kW" + limTxt + " - anklicken zum Aendern";
     }
   }
 }
 
-function gaugeCfgOpen() {
-  var box = document.getElementById("gauge_cfgbox");
+function gaugeRenderAll() {
+  GAUGE_DEFS.forEach(function (d) { gaugeRender(d); });
+}
+
+function gaugeCfgOpen(d) {
+  var box = document.getElementById("gauge_cfgbox_" + d.id);
   if (box.style.display !== "none") { box.style.display = "none"; return; }
-  var sel = document.getElementById("gauge_sel");
+  var sel = document.getElementById("gauge_sel_" + d.id);
   sel.innerHTML = "";
   var keys = Object.keys(slotmon_labels).sort();
-  if (keys.length === 0) {
-    document.getElementById("gauge_cfgmsg").innerText =
-      "Keine Werte im Slot-Monitoring - erst Geraet in Setup uebernehmen und Werte anhaken.";
-  } else {
-    document.getElementById("gauge_cfgmsg").innerText = "";
-  }
+  var msgEl = document.getElementById("gauge_cfgmsg_" + d.id);
+  msgEl.innerText = (keys.length === 0)
+    ? "Keine Werte im Slot-Monitoring - erst Geraet in Setup uebernehmen und Werte anhaken."
+    : "";
   keys.forEach(function (k) {
     var o = document.createElement("option");
     o.value = k; o.text = slotmon_labels[k] + " [" + k + "]";
     sel.appendChild(o);
   });
-  if (gauge_cfg) {
-    sel.value = gauge_cfg.key;
-    document.getElementById("gauge_max").value = gauge_cfg.max;
-    document.getElementById("gauge_unit").value = gauge_cfg.unit || "W";
-    document.getElementById("gauge_inv").checked = !!gauge_cfg.inv;
+  var cfg = gauge_cfgs[d.id];
+  if (cfg) {
+    sel.value = cfg.key;
+    document.getElementById("gauge_max_" + d.id).value = cfg.max;
+    document.getElementById("gauge_unit_" + d.id).value = cfg.unit || "W";
+    document.getElementById("gauge_inv_" + d.id).checked = !!cfg.inv;
   }
   box.style.display = "";
 }
 
-function gaugeInit() {
-  document.getElementById("gauge_canvas").addEventListener("click", gaugeCfgOpen);
-  document.getElementById("gauge_cancel").addEventListener("click", function () {
-    document.getElementById("gauge_cfgbox").style.display = "none";
+function gaugeBuild(d) {
+  var wrap = document.getElementById("gauges_wrap");
+  var box = document.createElement("div");
+  box.style.cssText = "display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap;";
+  box.innerHTML =
+    "<div>" +
+    "<div style='font-weight:bold; color:#1a3e6e;'>" + d.title +
+    "<span class='src-tag' id='gauge_src_" + d.id + "'></span></div>" +
+    "<canvas id='gauge_canvas_" + d.id + "' width='340' height='205'" +
+    " style='cursor:pointer;' title='Klicken: Messwert und Skala waehlen'></canvas>" +
+    "<div id='gauge_value_" + d.id + "' style='text-align:center; font-size:22px; font-weight:bold;'>-</div>" +
+    "<div id='gauge_state_" + d.id + "' style='text-align:center; font-size:12px; color:#666;'>" +
+    "Tacho anklicken: Messwert und Skala waehlen</div>" +
+    "</div>" +
+    "<div id='gauge_cfgbox_" + d.id + "' style='display:none; border:1px solid #ccc;" +
+    " border-radius:6px; padding:12px; font-size:13px; min-width:280px; background:#fafafa;'>" +
+    "<b>" + d.title + " - Konfiguration</b>" +
+    "<div style='margin-top:8px;'>Messwert (aus Slot-Monitoring):<br>" +
+    "<select id='gauge_sel_" + d.id + "' style='max-width:280px;'></select></div>" +
+    "<div style='margin-top:8px;'>Skala +/- <input id='gauge_max_" + d.id + "' size='5' value='200'> kW" +
+    " &nbsp; Einheit des Messwerts: <select id='gauge_unit_" + d.id + "'>" +
+    "<option value='W'>W</option><option value='kW'>kW</option></select></div>" +
+    "<div style='margin-top:8px;'><label><input type='checkbox' id='gauge_inv_" + d.id + "'>" +
+    " Vorzeichen umkehren (falls " + d.neg + " rechts erscheint)</label></div>" +
+    "<div style='margin-top:10px;'>" +
+    "<button id='gauge_save_" + d.id + "'>Uebernehmen</button> " +
+    "<button id='gauge_cancel_" + d.id + "'>Abbrechen</button> " +
+    "<button id='gauge_clear_" + d.id + "' style='color:#c62828;'>Tacho zuruecksetzen</button></div>" +
+    "<div id='gauge_cfgmsg_" + d.id + "' style='margin-top:6px; color:#c62828;'></div>" +
+    "</div>";
+  wrap.appendChild(box);
+
+  document.getElementById("gauge_canvas_" + d.id).addEventListener("click", function () { gaugeCfgOpen(d); });
+  document.getElementById("gauge_cancel_" + d.id).addEventListener("click", function () {
+    document.getElementById("gauge_cfgbox_" + d.id).style.display = "none";
   });
-  document.getElementById("gauge_clear").addEventListener("click", function () {
-    gauge_cfg = null;
-    try { localStorage.removeItem(GAUGE_KEY); } catch (e) {}
-    document.getElementById("gauge_cfgbox").style.display = "none";
-    gaugeRender();
+  document.getElementById("gauge_clear_" + d.id).addEventListener("click", function () {
+    gauge_cfgs[d.id] = null;
+    try { localStorage.removeItem(d.store); } catch (e) {}
+    document.getElementById("gauge_cfgbox_" + d.id).style.display = "none";
+    gaugeRender(d);
   });
-  document.getElementById("gauge_save").addEventListener("click", function () {
-    var key = document.getElementById("gauge_sel").value;
-    var max = parseFloat(document.getElementById("gauge_max").value);
-    var msg = document.getElementById("gauge_cfgmsg");
+  document.getElementById("gauge_save_" + d.id).addEventListener("click", function () {
+    var key = document.getElementById("gauge_sel_" + d.id).value;
+    var max = parseFloat(document.getElementById("gauge_max_" + d.id).value);
+    var msg = document.getElementById("gauge_cfgmsg_" + d.id);
     if (!key) { msg.innerText = "Bitte einen Messwert waehlen."; return; }
     if (isNaN(max) || max <= 0 || max > 100000) { msg.innerText = "Skala: Zahl > 0 eingeben (kW)."; return; }
-    gauge_cfg = {
+    gauge_cfgs[d.id] = {
       key: key,
       max: max,
-      unit: document.getElementById("gauge_unit").value,
-      inv: document.getElementById("gauge_inv").checked
+      unit: document.getElementById("gauge_unit_" + d.id).value,
+      inv: document.getElementById("gauge_inv_" + d.id).checked
     };
-    try { localStorage.setItem(GAUGE_KEY, JSON.stringify(gauge_cfg)); } catch (e) {}
+    try { localStorage.setItem(d.store, JSON.stringify(gauge_cfgs[d.id])); } catch (e) {}
     msg.innerText = "";
-    document.getElementById("gauge_cfgbox").style.display = "none";
-    gaugeRender();
+    document.getElementById("gauge_cfgbox_" + d.id).style.display = "none";
+    gaugeRender(d);
   });
-  gaugeRender();
+}
+
+function gaugeInit() {
+  GAUGE_DEFS.forEach(function (d) { gaugeBuild(d); });
+  gaugeRenderAll();
 }
 
 // ---------------- Direktlesung EMS-Quelle (generisch fuer DM + Tesvolt) ----------------
@@ -1229,8 +1280,18 @@ function loadParams() {
         if (name === "split_mode") document.getElementById("split_mode_display").innerText = v;
         if (name === "cap_t") document.getElementById("split_cap_t").innerText = v + " kWh";
         if (name === "cap_b") document.getElementById("split_cap_b").innerText = v + " kWh";
-        if (name === "grid_max_chg") setGridCell("split_grid_chg", v, " kW");
-        if (name === "grid_max_dis") setGridCell("split_grid_dis", v, " kW");
+        if (name === "grid_max_chg") {
+          setGridCell("split_grid_chg", v, " kW");
+          var lc = parseFloat(v);
+          grid_limits.chg = (isNaN(lc) || lc <= 0) ? null : lc;
+          gaugeRenderAll();
+        }
+        if (name === "grid_max_dis") {
+          setGridCell("split_grid_dis", v, " kW");
+          var ld = parseFloat(v);
+          grid_limits.dis = (isNaN(ld) || ld <= 0) ? null : ld;
+          gaugeRenderAll();
+        }
         if (name === "grid_use_ems") {
           document.getElementById("split_grid_ems").innerText = (v === "1") ? "aktiv (min mit Setup-Wert)" : "aus";
         }
