@@ -167,9 +167,15 @@ function setState(txt, cls) {
 
 function setMsg(html) { document.getElementById("msg").innerHTML = html; }
 
+function setStartBtn(txt, dis) {
+  var b = document.getElementById("startbtn");
+  b.textContent = txt;
+  b.disabled = dis;
+}
+
 function startCap() {
   var dur = document.getElementById("dur").value;
-  document.getElementById("startbtn").disabled = true;
+  setStartBtn("angefordert...", true);
   fetch("cgi-bin/sniff_ctl.cgi?cmd=start&dur=" + encodeURIComponent(dur) + "&_=" + Date.now())
     .then(function(r){ return r.text(); })
     .then(function(t){
@@ -181,12 +187,12 @@ function startCap() {
         startPolling();
       } else {
         setMsg('<div class="box warnbox">' + t + '</div>');
-        document.getElementById("startbtn").disabled = false;
+        setStartBtn("Capture starten", false);
       }
     })
     .catch(function(e){
       setMsg('<div class="box warnbox">Fehler: ' + e + '</div>');
-      document.getElementById("startbtn").disabled = false;
+      setStartBtn("Capture starten", false);
     });
 }
 
@@ -211,17 +217,18 @@ function pollStatus() {
         var left  = dur - (Math.floor(Date.now() / 1000) - start);
         if (left < 0) { left = 0; }
         setState("Capture laeuft - noch ~" + left + " s", "st-run");
+        setStartBtn("laeuft... " + left + " s", true);
       } else if (t.indexOf("DONE") === 0) {
         setState("fertig", "st-done");
         clearInterval(pollTimer); pollTimer = null;
-        document.getElementById("startbtn").disabled = false;
+        setStartBtn("Capture starten", false);
         document.getElementById("stopbtn").disabled = true;
         loadResult();
       } else if (t.indexOf("ERROR") === 0) {
         setState("FEHLER", "st-err");
         setMsg('<div class="box warnbox">' + t + '</div>');
         clearInterval(pollTimer); pollTimer = null;
-        document.getElementById("startbtn").disabled = false;
+        setStartBtn("Capture starten", false);
         document.getElementById("stopbtn").disabled = true;
       } else {
         setState("wartet auf Watchdog...", "st-run");
