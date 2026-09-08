@@ -14,6 +14,9 @@
 --   L.read_model_block(ip,port,unit,scan,model_id[,timeout])
 --                                 GANZES Modell als Block lesen (chunked)
 --   L.point_from_block(p,block)   Messpunkt aus Modell-Block dekodieren
+--   L.read_ranges(dev,ranges,gap_s[,timeout])
+--                                 Registerbereiche lesen -> Adress-Cache
+--   L.point_from_cache(p,cache)   Messpunkt aus Adress-Cache dekodieren
 --   L.read_point(dev,prof,p,scan,sf_cache)
 --                                 einen Messpunkt aufloesen und lesen
 --   L.decode / L.apply_sf / L.is_not_impl / L.sleep / L.read_file
@@ -29,6 +32,12 @@
 --   teils mit Timeout und liefert bei Einzelreads sporadisch
 --   verstuemmelte Werte. Deshalb: Scan mit 5 s Timeout + Retry, und
 --   Block-Read (ein Modell = ein Read) statt vieler Einzelreads.
+--
+-- BUSZEIT (Learning Solis, 2026-09-08, Sniffer-Capture):
+--   Einzelreads bei Absolutadressen-Profilen erzeugen viele kurze
+--   TCP-Verbindungen (Solis: 14+ Verbindungen, ~9 s Buszeit je Poll,
+--   TCP-Retransmissions). Abhilfe: read_ranges liest wenige grosse
+--   Bereiche in einen Adress-Cache, point_from_cache dekodiert daraus.
 --
 -- STRIKT READ-ONLY: dieses Modul enthaelt KEINE Schreibfunktion.
 -- =====================================================================
@@ -237,6 +246,71 @@ function M.point_from_block(p, block)
     if v == nil then return nil, "NA:SF not implemented" end
   end
   if p.scale and p.scale ~= 1 then v = v * p.scale end
+  return v
+end
+
+-- ---------- Bereichs-Block-Read (Absolutadressen-Profile) -------------------
+
+-- Liest die im Profil definierten Registerbereiche (prof.read_blocks) in
+-- einen Adress-Cache: cache[fc][addr] = Registerwort.
+-- ranges = { { fc=4, addr=33057, count=39 }, ... } (count <= max_regs!)
+-- Fehlgeschlagene Bloecke werden gesammelt gemeldet; die uebrigen Bloecke
+-- bleiben nutzbar (Punkte ausserhalb -> MISS -> Einzelread-Fallback).
+function M.read_ranges(dev, ranges, gap_s, timeout)
+  local cache, errs = {}, {}
+  local total = 0
+  for _, r in ipairs(ranges or {}) do total = total + 1 end
+  local i = 0
+  for _, r in ipairs(ranges or {}) do
+    i = i + 1
+    local fc = r.fc or 3
+    local w, e = M.read_regs_retry(dev.ip, dev.port, dev.unit, fc,
+                                   r.addr, r.count, timeout or 3, 3, 0.5)
+    if w then
+      cache[fc] = cache[fc] or {}
+      for k = 1, r.count do cache[fc][r.addr + k - 1] = w[k] end
+    else
+      errs[#errs + 1] = "block " .. r.addr .. "+" .. r.count .. ": " .. tostring(e)
+    end
+    if i < total and gap_s and gap_s > 0 then M.sleep(gap_s) end
+  end
+  if #errs > 0 then return cache, table.concat(errs, "; ") end
+  return cache, nil
+end
+
+-- Messpunkt aus dem Adress-Cache dekodieren (inkl. sf_addr, scale, dir_reg).
+-- Rueckgabe nil,"MISS" wenn eine benoetigte Adresse nicht im Cache liegt
+-- -> der Aufrufer faellt auf den klassischen Einzelread zurueck.
+function M.point_from_cache(p, cache)
+  local fc = p.fc or 3
+  local c = cache and cache[fc]
+  if not c or not p.addr or c[p.addr] == nil then return nil, "MISS" end
+  local n = M.word_count(p.type)
+  local words = { c[p.addr] }
+  if n == 2 then
+    words[2] = c[p.addr + 1]
+    if words[2] == nil then return nil, "MISS" end
+  end
+  if M.is_not_impl(words, p.type, p.not_impl) then
+    return nil, "NA:not implemented"
+  end
+  local v = M.decode(words, p.type)
+  if v == nil then return nil, "ERR:decode " .. tostring(p.type) end
+  if p.sf_addr then
+    local sfv = c[p.sf_addr]
+    if sfv == nil then return nil, "MISS" end
+    v = M.apply_sf(v, sfv)
+    if v == nil then return nil, "NA:SF not implemented" end
+  end
+  if p.scale and p.scale ~= 1 then v = v * p.scale end
+  -- Richtungsregister (z.B. Solis 33135) MUSS im selben Cache liegen -
+  -- so stammen Betrag und Richtung aus demselben konsistenten Poll.
+  if p.dir_reg then
+    local dw = c[p.dir_reg]
+    if dw == nil then return nil, "MISS" end
+    local mag = math.abs(v)
+    if dw == (p.dir_discharge or 1) then v = mag else v = -mag end
+  end
   return v
 end
 

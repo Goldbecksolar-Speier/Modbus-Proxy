@@ -20,6 +20,12 @@
 --    wird per bat_dir_reg hergestellt.
 --  * AC-Grid-Port 33151/52: + = Leistung fliesst aus dem WR raus.
 --  * Meter 33263/64: + = Einspeisung ins Netz, - = Netzbezug.
+--
+-- BLOCK-READ (Learning 2026-09-08, Sniffer-Capture): Einzelreads
+-- erzeugten 14+ TCP-Verbindungen und ~9 s Buszeit je Poll; der Solis
+-- quittierte langsam (TCP-Retransmissions im Capture) und die
+-- Solis-Cloud litt unter den Kollisionen. Drei Bereichs-Reads
+-- (read_blocks) decken alle Punkte ab -> 3 Verbindungen, <2 s.
 -- =====================================================================
 
 return {
@@ -32,6 +38,15 @@ return {
   min_gap_ms   = 300,      -- Herstellervorgabe Lese-Intervall
   max_regs     = 50,       -- max. Register pro Frame
   has_watchdog = true,     -- irrelevant solange read-only (kein write-Block)
+
+  -- Bereichs-Reads: Punkte werden aus diesen Bloecken dekodiert
+  -- (device_poll: read_ranges/point_from_cache). Punkte ausserhalb
+  -- fallen automatisch auf Einzelreads zurueck. count <= max_regs!
+  read_blocks = {
+    { fc = 4, addr = 33057, count = 39 },  -- 33057..33095: pv_power, fault, ac_power, grid_freq, status
+    { fc = 4, addr = 33133, count = 20 },  -- 33133..33152: Batterie (U/I/dir/SOC/SOH/P), house_load, grid_port_p
+    { fc = 4, addr = 33263, count = 2  },  -- 33263..33264: meter_power
+  },
 
   read = {
     pv_power     = { addr = 33057, fc = 4, type = "u32be", scale = 1,    unit = "W"  },  -- Total PV Input Power

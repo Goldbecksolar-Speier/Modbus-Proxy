@@ -29,6 +29,13 @@
 -- NX3 sporadisch verstuemmelte Werte (Hz=0.01, St=65534); ein Block ist
 -- in sich konsistent.
 --
+-- BEREICHS-READ (Learning Solis, 2026-09-08, Sniffer-Capture): Auch bei
+-- Absolutadressen-Profilen werden Einzelreads vermieden - definiert das
+-- Profil prof.read_blocks, liest read_ranges die Bereiche in einen
+-- Adress-Cache und die Punkte werden daraus dekodiert (Solis: 3 statt
+-- 14+ TCP-Verbindungen, Buszeit ~9 s -> <2 s). Punkte ausserhalb der
+-- Bloecke fallen automatisch auf den Einzelread zurueck (MISS).
+--
 -- PLAUSIBILITAET: prof.ui.plaus = { name = {min, max} } - Werte
 -- ausserhalb werden als err_<name>=PLAUS:<wert> verworfen statt
 -- angezeigt.
@@ -183,6 +190,14 @@ local function poll_slot(n)
     end
   end
 
+  -- Bereichs-Cache fuer Absolutadressen-Profile (prof.read_blocks)
+  local rcache
+  if prof.read_blocks then
+    local rerr
+    rcache, rerr = L.read_ranges(dev, prof.read_blocks, gap)
+    if rerr then lines[#lines + 1] = "block_warn=" .. rerr end
+  end
+
   local sf_cache = {}
   for pname, p in pairs(prof.read or {}) do
     local v, err
@@ -192,9 +207,17 @@ local function poll_slot(n)
     elseif p.model and not p.addr and block_errs[p.model] then
       v, err = nil, block_errs[p.model]
     else
-      -- klassischer Einzelread (Absolutadressen-Profile)
-      v, err = L.read_point(dev, prof, p, scan, sf_cache)
-      L.sleep(gap) -- Herstellervorgabe min_gap_ms einhalten
+      -- Bereichs-Cache zuerst (Absolutadressen-Profile mit read_blocks)
+      local from_cache = false
+      if rcache then
+        v, err = L.point_from_cache(p, rcache)
+        from_cache = (v ~= nil) or (err ~= "MISS")
+      end
+      if not from_cache then
+        -- klassischer Einzelread (Fallback bzw. Profile ohne read_blocks)
+        v, err = L.read_point(dev, prof, p, scan, sf_cache)
+        L.sleep(gap) -- Herstellervorgabe min_gap_ms einhalten
+      end
     end
     if v ~= nil then
       local pe = plaus_check(prof, pname, v)
