@@ -42,6 +42,7 @@
               padding: 6px 14px; font-weight: bold; cursor: pointer; }
   .btn-on:disabled, .btn-off:disabled, .btn-lim:disabled, .btn-lim2:disabled { background: #aaa; cursor: default; }
   input.pct { width: 50px; text-align: right; }
+  input.sec { width: 55px; text-align: right; }
 </style>
 </head>
 <body>
@@ -56,9 +57,15 @@
 
 <div>
   <button id="pollbtn">Jetzt pollen</button>
+  &nbsp;|&nbsp; Poll-Intervall:
+  <input type="text" class="sec" id="pollint" placeholder="60"> s
+  <button id="pollintbtn">Speichern</button>
   <span id="globmsg"></span><br>
   <small class="hint">Der Poll laeuft im Watchdog (root) - Anzeige aktualisiert sich
-  innerhalb von ca. 5-70 s. Profile liegen in /usr/local/bin/profiles/ (Name ohne .lua).
+  je nach Intervall. Intervall 10..3600 s (Default 60); Aenderung wirkt ohne Neustart.
+  Laengeres Intervall = weniger Kollisionen, wenn Cloud/andere EMS dieselben Geraete
+  abfragen (Kaco NX3 vertraegt keine parallelen Verbindungen!).
+  Profile liegen in /usr/local/bin/profiles/ (Name ohne .lua).
   Profile mit write-Block werden abgewiesen (Phase 1: strikt read-only).</small>
 </div>
 
@@ -169,6 +176,42 @@ function sendLimit(n, via704) {
   var weg = via704 ? "Modell 704" : "Modell 123";
   ctlFetch(n, "cmd=" + cmd + "&pct=" + pct,
     "Wechselrichter in Slot " + n + " wirklich auf " + pct + "% Leistung begrenzen (" + weg + ")?");
+}
+
+function loadPollInt() {
+  fetch("/cgi-bin/set_devpoll.cgi")
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var m = t.match(/INTERVAL=(\d+)/);
+      if (m) el("pollint").value = m[1];
+    })
+    .catch(function () {});
+}
+
+function savePollInt() {
+  var v = parseInt(el("pollint").value, 10);
+  var g = el("globmsg");
+  if (isNaN(v) || v < 10 || v > 3600) {
+    g.innerText = "Intervall 10..3600 s eingeben!";
+    g.style.color = "#c00";
+    return;
+  }
+  fetch("/cgi-bin/set_devpoll.cgi?interval=" + v)
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      t = t.trim();
+      if (t.indexOf("OK") === 0) {
+        g.innerText = "Poll-Intervall " + v + " s gespeichert (wirkt sofort).";
+        g.style.color = "#080";
+      } else {
+        g.innerText = t;
+        g.style.color = "#c00";
+      }
+    })
+    .catch(function () {
+      g.innerText = "HTTP-Fehler beim Speichern!";
+      g.style.color = "#c00";
+    });
 }
 
 function loadCfg(n) {
@@ -355,8 +398,11 @@ function refreshAll() {
 
 buildSlots();
 for (var n = 1; n <= NSLOTS; n++) loadCfg(n);
+loadPollInt();
 refreshAll();
 setInterval(refreshAll, 10000);
+
+document.getElementById("pollintbtn").addEventListener("click", savePollInt);
 
 document.getElementById("pollbtn").addEventListener("click", function () {
   fetch("/cgi-bin/read_dev.cgi?poll=1")
