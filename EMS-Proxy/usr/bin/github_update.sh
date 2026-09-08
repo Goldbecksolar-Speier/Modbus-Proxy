@@ -114,6 +114,7 @@ cp "$SRC/usr/bin/mb_cli.lua"        "$BIN/" || fail "copy mb_cli.lua"
 [ -f "$SRC/usr/bin/profile_loader.lua" ] && cp "$SRC/usr/bin/profile_loader.lua" "$BIN/"
 [ -f "$SRC/usr/bin/device_poll.lua" ]    && cp "$SRC/usr/bin/device_poll.lua"    "$BIN/"
 [ -f "$SRC/usr/bin/sunspec_diag.lua" ]   && cp "$SRC/usr/bin/sunspec_diag.lua"   "$BIN/"
+[ -f "$SRC/usr/bin/sniff_parse.lua" ]    && cp "$SRC/usr/bin/sniff_parse.lua"    "$BIN/"
 cp "$SRC/etc/init.d/ems_watchdog"   /etc/init.d/ || fail "copy init.d/ems_watchdog"
 cp "$SRC"/cgi-bin/*.cgi             "$WEB/cgi-bin/" || fail "copy cgi-bin"
 cp "$SRC"/www/*.html                "$WEB/" || fail "copy www"
@@ -170,6 +171,7 @@ log "Konfigdatei-Rechte fuer uhttpd-User gesetzt (inkl. Geraeteslots dev1-dev4)"
 chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua "$BIN"/mb_cli.lua \
          "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh "$BIN"/bluesun_test_guard.sh \
          "$BIN"/profile_loader.lua "$BIN"/device_poll.lua "$BIN"/sunspec_diag.lua \
+         "$BIN"/sniff_parse.lua \
          /etc/init.d/ems_watchdog "$WEB"/cgi-bin/*.cgi 2>/dev/null
 
 # --- 5. uhttpd-Instanz fuer die Web-UI (Port 8080) ---------------------------
@@ -188,6 +190,13 @@ if ! opkg list-installed 2>/dev/null | grep -qi luasocket; then
     log "luasocket fehlt - installiere via opkg"
     opkg update >/dev/null 2>&1
     opkg install luasocket >/dev/null 2>&1 || log "WARNUNG: luasocket-Installation fehlgeschlagen"
+fi
+
+# --- 6b. tcpdump fuer die Sniffer-Seite (sniffer.html) -------------------------
+if ! command -v tcpdump >/dev/null 2>&1; then
+    log "tcpdump fehlt - installiere via opkg (Sniffer-Seite)"
+    opkg update >/dev/null 2>&1
+    opkg install tcpdump >/dev/null 2>&1 || log "WARNUNG: tcpdump-Installation fehlgeschlagen - Sniffer-Seite meldet Fehler"
 fi
 
 # --- 7. Dienste ----------------------------------------------------------------
