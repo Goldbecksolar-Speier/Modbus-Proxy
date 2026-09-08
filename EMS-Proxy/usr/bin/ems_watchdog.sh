@@ -18,6 +18,10 @@
 #  * Sniffer (sniffer.html): startet auf Marker-Anforderung ein
 #    passives tcpdump-Capture (Port 502) - CGIs laufen als uhttpd
 #    und duerfen kein tcpdump starten, deshalb macht es der Watchdog.
+#  * Port-Mirroring (sniffer.html): setzt auf Marker-Anforderung die
+#    swconfig-Mirror-Register (CGIs duerfen kein swconfig) und
+#    schreibt den Port-/Mirror-Status alle 10 s nach /tmp fuer die UI.
+#    NICHT reboot-fest (gewollt, Regel 23).
 #  * repariert fehlende Konfigdateien
 #  * einfache Logrotation (max. 500 kB)
 #  * kill per PID statt killall (sauberer auf BusyBox)
@@ -190,6 +194,86 @@ sniff_tick() {
     ) &
 }
 
+# ---------------------------------------------------------------------
+# Port-Mirroring (sniffer.html): uhttpd->root-Kanal (Regel 18).
+# mirror_ctl.cgi legt /tmp/emsproxy_mirror_req an, der Watchdog setzt
+# die swconfig-Register (Monitor-Port fest = 0 = CPU) und schreibt den
+# Port-/Mirror-Status alle 10 s nach /tmp/emsproxy_swports:
+#   ts=<unix>  mirror_rx=0/1  mirror_tx=0/1  mirror_src=N  mirror_mon=N
+#   port=N:up|down:<speed>   (je Switch-Port eine Zeile)
+# Die Einstellung ist NICHT reboot-fest (gewollt, Regel 23) und kostet
+# CPU/Durchsatz - nach der Analyse wieder abschalten!
+# ---------------------------------------------------------------------
+MIRROR_LAST=0
+
+mirror_apply() {
+    # $1 = rx (0/1), $2 = tx (0/1), $3 = Quellport (leer bei off)
+    swconfig dev switch0 set enable_mirror_rx "$1" 2>>"$LOG"
+    swconfig dev switch0 set enable_mirror_tx "$2" 2>>"$LOG"
+    if [ -n "$3" ]; then
+        swconfig dev switch0 set mirror_monitor_port 0 2>>"$LOG"
+        swconfig dev switch0 set mirror_source_port "$3" 2>>"$LOG"
+    fi
+    swconfig dev switch0 set apply 1 2>>"$LOG"
+}
+
+mirror_tick() {
+    command -v swconfig >/dev/null 2>&1 || return
+    # 1) Anforderung der UI umsetzen (Marker von mirror_ctl.cgi)
+    if [ -f /tmp/emsproxy_mirror_req ]; then
+        REQ=$(cat /tmp/emsproxy_mirror_req 2>/dev/null | tr -cd 'a-z0-9:=')
+        rm -f /tmp/emsproxy_mirror_req
+        case "$REQ" in
+            on:*)
+                RX=$(echo "$REQ" | sed -n 's/.*rx=\([01]\).*/\1/p')
+                TX=$(echo "$REQ" | sed -n 's/.*tx=\([01]\).*/\1/p')
+                SRC=$(echo "$REQ" | sed -n 's/.*src=\([1-9]\).*/\1/p')
+                [ -z "$RX" ] && RX=1
+                [ -z "$TX" ] && TX=1
+                if [ -n "$SRC" ]; then
+                    mirror_apply "$RX" "$TX" "$SRC"
+                    logmsg "Mirroring EIN: Port $SRC -> CPU (rx=$RX tx=$TX) - NICHT reboot-fest, nach Analyse abschalten!"
+                else
+                    logmsg "Mirroring: Anforderung ohne gueltigen Quellport ignoriert ($REQ)"
+                fi
+                ;;
+            off)
+                mirror_apply 0 0 ""
+                logmsg "Mirroring AUS"
+                ;;
+        esac
+        MIRROR_LAST=0   # Status sofort aktualisieren
+    fi
+    # 2) Port-/Mirror-Status alle 10 s fuer die UI schreiben
+    NOW=$(date +%s)
+    [ $((NOW - MIRROR_LAST)) -lt 10 ] && return
+    MIRROR_LAST=$NOW
+    {
+        echo "ts=$NOW"
+        MRX=$(swconfig dev switch0 get enable_mirror_rx 2>/dev/null | tr -cd '0-9')
+        MTX=$(swconfig dev switch0 get enable_mirror_tx 2>/dev/null | tr -cd '0-9')
+        MSRC=$(swconfig dev switch0 get mirror_source_port 2>/dev/null | tr -cd '0-9')
+        MMON=$(swconfig dev switch0 get mirror_monitor_port 2>/dev/null | tr -cd '0-9')
+        echo "mirror_rx=${MRX:-0}"
+        echo "mirror_tx=${MTX:-0}"
+        echo "mirror_src=$MSRC"
+        echo "mirror_mon=$MMON"
+        swconfig dev switch0 show 2>/dev/null | while read -r LINE; do
+            case "$LINE" in
+                *port:*link:*)
+                    P=$(echo "$LINE" | sed -n 's/.*port:\([0-9]*\) .*/\1/p')
+                    ST=down
+                    echo "$LINE" | grep -q 'link:up' && ST=up
+                    SPD=$(echo "$LINE" | sed -n 's/.*speed:\([0-9]*\).*/\1/p')
+                    [ -n "$P" ] && echo "port=$P:$ST:$SPD"
+                    ;;
+            esac
+        done
+    } > /tmp/emsproxy_swports.tmp 2>/dev/null
+    mv /tmp/emsproxy_swports.tmp /tmp/emsproxy_swports 2>/dev/null
+    chmod 644 /tmp/emsproxy_swports 2>/dev/null
+}
+
 logmsg "Watchdog gestartet"
 
 while true; do
@@ -202,6 +286,9 @@ while true; do
     # 0b) Sniffer-Anforderung pruefen (laeuft ebenfalls unabhaengig
     #     vom Proxy-Zustand - rein passives Mitlesen)
     sniff_tick
+
+    # 0c) Port-Mirroring: UI-Anforderung umsetzen + Portstatus schreiben
+    mirror_tick
 
     # 0) Start/Stop-Wunsch der Setup-UI umsetzen
     ENABLED=$(cat /etc/tesvolt_proxy_enabled 2>/dev/null)

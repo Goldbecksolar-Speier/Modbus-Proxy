@@ -34,6 +34,17 @@
  .legend span { margin-right:14px; font-size:0.85em; }
  ul { margin:6px 0; padding-left:20px; }
  li { margin:3px 0; }
+ .ptag { display:inline-block; padding:8px 14px; margin:3px 6px 3px 0; border-radius:6px; cursor:pointer;
+         border:2px solid #3a4454; background:#0e1218; color:#8a94a3; font-weight:bold; font-size:0.9em;
+         user-select:none; }
+ .ptag small { display:block; font-weight:normal; font-size:0.75em; }
+ .ptag.up { border-color:#22c55e; color:#22c55e; }
+ .ptag.sel { background:#2563eb; color:#fff; border-color:#2563eb; }
+ .ptag.act { background:#7a5c1e; color:#ffd766; border-color:#eab308; }
+ .ptag.dis { cursor:default; opacity:0.6; }
+ #mstate { font-weight:bold; }
+ .m-on { color:#eab308; } .m-off { color:#8a94a3; }
+ label.chk { cursor:pointer; }
 </style>
 </head>
 <body>
@@ -84,6 +95,19 @@
   </table>
 </div>
 
+<div class="box" style="margin-top:14px;">
+  <b>Port-Mirroring</b>
+  <span style="color:#8a94a3; font-size:0.85em;"> - Quellport anklicken, Haken setzen, einschalten. Gruen = Link aktiv. Nicht reboot-fest.</span>
+  <div id="mports" style="margin-top:8px;">Lade Portstatus...</div>
+  <div class="row" style="margin-top:8px;">
+    <label class="chk"><input type="checkbox" id="mrx" checked> RX (empfangen) mitschneiden</label>
+    <label class="chk"><input type="checkbox" id="mtx" checked> TX (senden) mitschneiden</label>
+    <button id="mbtn" onclick="toggleMirror()" disabled>Mirroring einschalten</button>
+    <span id="mstate" class="m-off">-</span>
+  </div>
+  <div id="mmsg" style="margin-top:6px; font-size:0.85em; color:#8a94a3;"></div>
+</div>
+
 <div class="box warnbox" style="margin-top:14px;">
   <b>Was der Router OHNE Port-Mirroring sieht:</b>
   <ul>
@@ -93,15 +117,16 @@
         der Switch-Chip leitet solche Pakete direkt weiter, die Router-CPU (und damit tcpdump)
         sieht davon NICHTS.</li>
   </ul>
-  Fuer die volle Sicht auf den Bus-Verkehr muss Port-Mirroring aktiviert werden (siehe unten).
+  Fuer die volle Sicht auf den Bus-Verkehr das Port-Mirroring oben einschalten
+  (Kopie geht an den CPU-Port 0, dort lauscht tcpdump) - und nach der Analyse
+  wieder AUSSCHALTEN, es kostet CPU und Durchsatz.
 </div>
 
 <div class="box infobox">
-  <b>Port-Mirroring am RUTX11 einrichten (per SSH als root)</b>
+  <b>Fallback: Port-Mirroring manuell per SSH (als root)</b>
   <p style="margin:6px 0;">
-    Der RUTX11 hat einen internen Switch-Chip. Mit Mirroring wird der Verkehr eines
-    LAN-Ports zusaetzlich an die Router-CPU kopiert - erst dann sieht der Sniffer auch
-    den direkten Verkehr fremder Geraete an diesem Port.
+    Falls die Buttons oben nicht reagieren (Watchdog aelter als dieser Stand oder
+    gestoppt), funktioniert der Weg ueber die Kommandozeile immer:
   </p>
   <p style="margin:6px 0;"><b>1. Portbelegung anzeigen</b> (welche Nummer hat welcher LAN-Port?):</p>
   <pre>swconfig dev switch0 show | grep -i port</pre>
@@ -110,14 +135,16 @@
   <pre>swconfig dev switch0 set enable_mirror_rx 1
 swconfig dev switch0 set enable_mirror_tx 1
 swconfig dev switch0 set mirror_monitor_port 0
-swconfig dev switch0 set mirror_source_port 2</pre>
+swconfig dev switch0 set mirror_source_port 2
+swconfig dev switch0 set apply 1</pre>
   <p style="margin:6px 0;"><b>3. Nach der Analyse wieder ausschalten</b> (Mirroring kostet CPU/Durchsatz):</p>
   <pre>swconfig dev switch0 set enable_mirror_rx 0
-swconfig dev switch0 set enable_mirror_tx 0</pre>
+swconfig dev switch0 set enable_mirror_tx 0
+swconfig dev switch0 set apply 1</pre>
   <ul>
     <li>Die Einstellung ist NICHT reboot-fest - ein Neustart des Routers loescht sie (gewollt, als Sicherheitsnetz).</li>
-    <li><code>mirror_monitor_port 0</code> = CPU-Port; die genaue Nummerierung mit Schritt 1 pruefen
-        (kann je Firmware abweichen - im Zweifel <code>swconfig dev switch0 help</code>).</li>
+    <li><code>mirror_monitor_port 0</code> = CPU-Port; erkennbar an: tagged (0t) in der LAN-VLAN,
+        Mitglied in ALLEN VLANs, 1G-Link ohne "auto" (feste interne Anbindung).</li>
     <li>Es kann immer nur EIN Quellport gespiegelt werden - fuer mehrere Geraete den
         <code>mirror_source_port</code> nacheinander umsetzen und je ein Capture fahren.</li>
     <li>Voraussetzung fuer den Sniffer: <code>tcpdump</code> installiert
@@ -233,6 +260,119 @@ function loadResult() {
              "</div>");
     });
 }
+
+// ---------------- Port-Mirroring UI ----------------
+var selPort = null;
+var mirrorOn = false;
+var mirrorSrc = "";
+
+function setMMsg(txt) { document.getElementById("mmsg").textContent = txt; }
+
+function renderMirror(txt) {
+  var lines = txt.split("\n");
+  var ports = [];
+  var mrx = "0", mtx = "0", msrc = "";
+  for (var i = 0; i < lines.length; i++) {
+    var ln = lines[i].trim();
+    if (ln.indexOf("ERR") === 0) {
+      document.getElementById("mports").textContent = ln;
+      document.getElementById("mbtn").disabled = true;
+      return;
+    }
+    if (ln.indexOf("mirror_rx=") === 0)  { mrx = ln.substring(10); }
+    if (ln.indexOf("mirror_tx=") === 0)  { mtx = ln.substring(10); }
+    if (ln.indexOf("mirror_src=") === 0) { msrc = ln.substring(11); }
+    if (ln.indexOf("port=") === 0) {
+      var c = ln.substring(5).split(":");
+      ports.push({ n: c[0], up: c[1] === "up", spd: c[2] || "" });
+    }
+  }
+  mirrorOn = (mrx === "1" || mtx === "1");
+  mirrorSrc = msrc;
+
+  var wrap = document.getElementById("mports");
+  wrap.innerHTML = "";
+  for (var k = 0; k < ports.length; k++) {
+    var p = ports[k];
+    if (p.n === "0") { continue; } // CPU-Port nicht anbieten
+    var tag = document.createElement("span");
+    tag.className = "ptag" + (p.up ? " up" : "");
+    if (mirrorOn && p.n === msrc) { tag.className += " act"; }
+    else if (!mirrorOn && p.n === selPort) { tag.className += " sel"; }
+    if (mirrorOn) { tag.className += " dis"; }
+    var spdTxt = p.spd === "1000" ? "1 GBit" : (p.spd === "100" ? "100 MBit" : (p.spd === "10" ? "10 MBit" : ""));
+    var sub = p.up ? (spdTxt || "Link up") : "kein Link";
+    if (mirrorOn && p.n === msrc) { sub = "wird gespiegelt"; }
+    tag.innerHTML = "Port " + p.n + "<small>" + sub + "</small>";
+    tag.setAttribute("data-port", p.n);
+    tag.onclick = function() {
+      if (mirrorOn) { return; }
+      selPort = this.getAttribute("data-port");
+      renderMirror(txt);
+    };
+    wrap.appendChild(tag);
+  }
+  if (ports.length === 0) {
+    wrap.textContent = "Keine Portdaten - Watchdog aktualisiert alle 10 s, bitte warten.";
+  }
+
+  var btn = document.getElementById("mbtn");
+  var st  = document.getElementById("mstate");
+  document.getElementById("mrx").disabled = mirrorOn;
+  document.getElementById("mtx").disabled = mirrorOn;
+  if (mirrorOn) {
+    btn.textContent = "Mirroring AUSSCHALTEN (Port " + msrc + " aktiv)";
+    btn.className = "stop";
+    btn.disabled = false;
+    st.textContent = "AKTIV: Port " + msrc + " -> CPU (rx=" + mrx + " tx=" + mtx + ")";
+    st.className = "m-on";
+  } else {
+    btn.textContent = "Mirroring einschalten";
+    btn.className = "";
+    btn.disabled = (selPort === null);
+    st.textContent = "aus" + (selPort !== null ? " - Port " + selPort + " gewaehlt" : " - erst Quellport anklicken");
+    st.className = "m-off";
+  }
+}
+
+function refreshMirror() {
+  fetch("cgi-bin/mirror_ctl.cgi?cmd=status&_=" + Date.now())
+    .then(function(r){ return r.text(); })
+    .then(renderMirror)
+    .catch(function(e){ setMMsg("Fehler beim Statusabruf: " + e); });
+}
+
+function toggleMirror() {
+  var url;
+  if (mirrorOn) {
+    url = "cgi-bin/mirror_ctl.cgi?cmd=off&_=" + Date.now();
+  } else {
+    if (selPort === null) { return; }
+    var rx = document.getElementById("mrx").checked ? "1" : "0";
+    var tx = document.getElementById("mtx").checked ? "1" : "0";
+    if (rx === "0" && tx === "0") {
+      setMMsg("Mindestens einen Haken (RX/TX) setzen.");
+      return;
+    }
+    url = "cgi-bin/mirror_ctl.cgi?cmd=on&src=" + encodeURIComponent(selPort) +
+          "&rx=" + rx + "&tx=" + tx + "&_=" + Date.now();
+  }
+  document.getElementById("mbtn").disabled = true;
+  fetch(url)
+    .then(function(r){ return r.text(); })
+    .then(function(t){
+      setMMsg(t.trim() + " (Anzeige aktualisiert sich in ~10 s)");
+      setTimeout(refreshMirror, 6000);
+      setTimeout(refreshMirror, 12000);
+    })
+    .catch(function(e){
+      setMMsg("Fehler: " + e);
+      document.getElementById("mbtn").disabled = false;
+    });
+}
+
+refreshMirror();
+setInterval(refreshMirror, 10000);
 
 // Beim Laden: falls schon ein Ergebnis/laufendes Capture existiert, anzeigen
 pollStatus();
