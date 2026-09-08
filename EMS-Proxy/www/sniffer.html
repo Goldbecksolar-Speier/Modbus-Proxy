@@ -158,6 +158,8 @@ swconfig dev switch0 set apply 1</pre>
 <script>
 "use strict";
 var pollTimer = null;
+var awaitingRun = false;  // nach Start-Klick: altes DONE ignorieren bis RUNNING gesehen
+var reqTs = 0;
 
 function setState(txt, cls) {
   var el = document.getElementById("state");
@@ -182,6 +184,8 @@ function startCap() {
       t = t.trim();
       if (t.indexOf("OK:") === 0) {
         setMsg("");
+        awaitingRun = true;
+        reqTs = Date.now();
         document.getElementById("stopbtn").disabled = false;
         setState("angefordert...", "st-run");
         startPolling();
@@ -197,6 +201,7 @@ function startCap() {
 }
 
 function stopCap() {
+  awaitingRun = false;
   fetch("cgi-bin/sniff_ctl.cgi?cmd=stop&_=" + Date.now());
 }
 
@@ -211,6 +216,7 @@ function pollStatus() {
     .then(function(t){
       t = t.trim();
       if (t.indexOf("RUNNING") === 0) {
+        awaitingRun = false;
         var parts = t.split(":");
         var start = parseInt(parts[1], 10) || 0;
         var dur   = parseInt(parts[2], 10) || 0;
@@ -219,6 +225,21 @@ function pollStatus() {
         setState("Capture laeuft - noch ~" + left + " s", "st-run");
         setStartBtn("laeuft... " + left + " s", true);
       } else if (t.indexOf("DONE") === 0) {
+        if (awaitingRun) {
+          // altes DONE vom vorigen Capture - Watchdog hat den Marker noch nicht abgeholt
+          if (Date.now() - reqTs > 20000) {
+            awaitingRun = false;
+            setState("FEHLER", "st-err");
+            setMsg('<div class="box warnbox">Watchdog hat die Anforderung nicht uebernommen (laeuft ems_watchdog?)</div>');
+            clearInterval(pollTimer); pollTimer = null;
+            setStartBtn("Capture starten", false);
+            document.getElementById("stopbtn").disabled = true;
+          } else {
+            setState("wartet auf Watchdog...", "st-run");
+            setStartBtn("angefordert...", true);
+          }
+          return;
+        }
         setState("fertig", "st-done");
         clearInterval(pollTimer); pollTimer = null;
         setStartBtn("Capture starten", false);
