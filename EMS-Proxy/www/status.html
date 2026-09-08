@@ -367,6 +367,11 @@ var slotmon_hist = {};
 try { slotmon_hist = JSON.parse(localStorage.getItem(SLOTMON_HIST_KEY)) || {}; } catch (e) { slotmon_hist = {}; }
 var slotmon_labels = {};   // smId -> Anzeigename (bei jedem Refresh aktualisiert)
 var slotmon_now = {};      // "sm_<smId>" -> letzter Messwert (fuer hist-now)
+// Aktive smIds (Slot insetup=1 UND Key in mon-Liste) - fuer Verwaisten-Erkennung:
+// Kurve ohne aktiven smId (Geraet/Wert im Setup entfernt) wird ROT markiert
+// und per Klick geloescht. Erst gueltig, wenn alle cfg-Reads fehlerfrei waren.
+var slotmon_active = {};
+var slotmon_active_known = false;
 
 function slotmonHistSave() {
   try { localStorage.setItem(SLOTMON_HIST_KEY, JSON.stringify(slotmon_hist)); } catch (e) {}
@@ -377,14 +382,41 @@ function buildSlotmonHistory() {
   wrap.innerHTML = "";
   Object.keys(slotmon_hist).sort().forEach(function (smId) {
     var reg = "sm_" + smId;
+    var lbl = slotmon_hist[smId].label || smId;
+    var orphan = slotmon_active_known && !slotmon_active[smId];
     var row = document.createElement("div");
     row.className = "hist-row";
-    row.innerHTML =
-      "<div class='hist-label'><b>" + (slotmon_hist[smId].label || smId) + "</b>Slot-Monitoring</div>" +
-      "<div class='hist-canvas-wrap'><canvas class='hist-canvas' id='hist_" + reg + "'></canvas></div>" +
-      "<div class='hist-now' id='histnow_" + reg + "'>-</div>";
-    wrap.appendChild(row);
-    attachTooltip(reg);
+    if (orphan) {
+      // Wert nicht mehr im Slot-Monitoring (Geraet/Wert im Setup entfernt):
+      // rot markieren, Klick loescht Kurve + gesammelte Daten
+      row.style.background = "#fdecea";
+      row.style.outline = "1px solid #c62828";
+      row.style.cursor = "pointer";
+      row.title = "Nicht mehr im Slot-Monitoring - klicken loescht Kurve und Daten";
+      row.innerHTML =
+        "<div class='hist-label'><b style='color:#c62828'>" + lbl + "</b>" +
+        "<span style='color:#c62828'>entfernt - klicken zum Loeschen</span></div>" +
+        "<div class='hist-canvas-wrap'><canvas class='hist-canvas' id='hist_" + reg + "'></canvas></div>" +
+        "<div class='hist-now' id='histnow_" + reg + "'>-</div>";
+      row.addEventListener("click", function () {
+        if (!confirm("Verlaufskurve '" + lbl + "' und gesammelte Daten loeschen?")) return;
+        delete slotmon_hist[smId];
+        delete history_data["sm_" + smId];
+        delete slotmon_now["sm_" + smId];
+        histSave();
+        slotmonHistSave();
+        buildSlotmonHistory();
+        renderSlotmonHistoryAll();
+      });
+      wrap.appendChild(row);
+    } else {
+      row.innerHTML =
+        "<div class='hist-label'><b>" + lbl + "</b>Slot-Monitoring</div>" +
+        "<div class='hist-canvas-wrap'><canvas class='hist-canvas' id='hist_" + reg + "'></canvas></div>" +
+        "<div class='hist-now' id='histnow_" + reg + "'>-</div>";
+      wrap.appendChild(row);
+      attachTooltip(reg);
+    }
   });
 }
 
@@ -409,10 +441,21 @@ function slotmonParse(t) {
 
 function slotmonRefresh() {
   var rowsBySlot = {};
+  var active = {};      // in diesem Durchlauf aktive smIds (aus cfg)
+  var cfgFail = false;  // true = mind. ein cfg-Read gescheitert -> active unzuverlaessig
   var pending = SLOTMON_NSLOTS;
   function done() {
     pending--;
     if (pending > 0) return;
+    // Verwaisten-Erkennung aktualisieren (nur wenn alle cfg-Reads OK waren)
+    if (!cfgFail) {
+      var neu = JSON.stringify(Object.keys(active).sort());
+      var alt = JSON.stringify(Object.keys(slotmon_active).sort());
+      var warBekannt = slotmon_active_known;
+      slotmon_active = active;
+      slotmon_active_known = true;
+      if (!warBekannt || neu !== alt) buildSlotmonHistory();
+    }
     var tbody = document.querySelector("#slotmon_table tbody");
     var panel = document.getElementById("slotmon_panel");
     var html = "", anyRow = false;
@@ -435,6 +478,9 @@ function slotmonRefresh() {
         .then(function (t) {
           var cfg = slotmonParse(t);
           var mon = (cfg.mon || "").split(",").filter(function (k) { return k !== ""; });
+          if (cfg.insetup === "1") {
+            mon.forEach(function (k) { active[n + ":" + k] = 1; });
+          }
           if (cfg.insetup !== "1" || mon.length === 0) { done(); return; }
           fetch("/cgi-bin/read_dev.cgi?slot=" + n)
             .then(function (r) { return r.text(); })
@@ -480,7 +526,7 @@ function slotmonRefresh() {
             })
             .catch(function () { done(); });
         })
-        .catch(function () { done(); });
+        .catch(function () { cfgFail = true; done(); });
     })(n);
   }
 }
