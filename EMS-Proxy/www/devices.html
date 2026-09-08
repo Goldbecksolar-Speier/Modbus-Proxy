@@ -12,10 +12,20 @@
   .slot { background: #fff; border: 1px solid #ccc; border-radius: 8px;
           box-shadow: 0 1px 3px rgba(0,0,0,.2); padding: 12px 14px; margin-bottom: 16px; }
   .slot h3 { margin: 2px 0 10px 0; color: #1a3e6e; }
-  .cfg-row { margin: 4px 0; font-size: 14px; }
+  .cfg-row { margin: 6px 0; font-size: 14px; }
   .cfg-row input[type=text] { width: 150px; }
   .dname { color: #555; font-weight: normal; font-size: 15px; margin-left: 10px; }
   .cfg-row input.num { width: 60px; }
+  .cfg-row input.pfree { width: 170px; }
+  .ptag { display: inline-block; padding: 4px 12px; margin: 2px 3px; border: 1px solid #9ab;
+          border-radius: 6px; background: #eef2f6; color: #1a3e6e; cursor: pointer;
+          font-size: 13px; font-weight: bold; user-select: none; }
+  .ptag:hover { background: #d9e6f2; }
+  .ptag.active { background: #2e7dd1; color: #fff; border-color: #2e7dd1; }
+  .btn-save { border: 0; border-radius: 5px; padding: 6px 18px; font-weight: bold; font-size: 14px; }
+  .btn-save.clean { background: #b5b5b5; color: #fff; cursor: default; }
+  .btn-save.dirty { background: #1a7a2e; color: #fff; cursor: pointer; }
+  .btn-save.invalid { background: #d17f2e; color: #fff; cursor: default; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; color: #fff;
            font-weight: bold; font-size: 12px; margin-left: 8px; }
   .b-ok   { background: #1a7a2e; }
@@ -67,6 +77,9 @@
   je nach Intervall. Intervall 10..3600 s (Default 60); Aenderung wirkt ohne Neustart.
   Laengeres Intervall = weniger Kollisionen, wenn Cloud/andere EMS dieselben Geraete
   abfragen (Kaco NX3 vertraegt keine parallelen Verbindungen!).
+  Profil per Klick auf einen Profil-Tag waehlen (blau = gewaehlt) - der
+  Speichern-Button ist GRAU solange nichts geaendert wurde (= Profil geladen),
+  GRUEN bei gueltigen Aenderungen und ORANGE bei fehlerhaften Eingaben.
   Profile liegen in /usr/local/bin/profiles/ (Name ohne .lua).
   Profile mit write-Block werden abgewiesen (Phase 1: strikt read-only).</small>
 </div>
@@ -76,8 +89,8 @@
 <script>
 var NSLOTS = 4;
 
-// bekannte Profile als Vorschlag (freies Textfeld bleibt moeglich)
-var KNOWN_PROFILES = ["", "solis_s6_hybrid", "kaco_nx3_sunspec", "janitza_umg604",
+// bekannte Profile als anklickbare Tags (freies Textfeld bleibt moeglich)
+var KNOWN_PROFILES = ["solis_s6_hybrid", "kaco_nx3_sunspec", "janitza_umg604",
                       "tesvolt_bat", "bluesun_udan"];
 
 // Profile mit manueller Steuerung (control-Block + dev_control.cgi).
@@ -86,25 +99,125 @@ var CONTROL_PROFILES = { kaco_nx3_sunspec: 1 };
 
 function el(id) { return document.getElementById(id); }
 
+// je Slot: gewaehltes Tag-Profil + zuletzt gespeicherter Zustand (dirty-Tracking)
+var selProf = {};
+var savedCfg = {};
+
+function effProfile(n) {
+  var f = el("pfree" + n).value.trim();
+  return f !== "" ? f : (selProf[n] || "");
+}
+
+function renderTags(n) {
+  var html = "<span class='ptag" + (selProf[n] === "" && el("pfree" + n).value.trim() === "" ? " active" : "") +
+             "' data-p=''>(leer)</span>";
+  KNOWN_PROFILES.forEach(function (p) {
+    html += "<span class='ptag" + (selProf[n] === p ? " active" : "") +
+            "' data-p='" + p + "'>" + p + "</span>";
+  });
+  var wrap = el("ptags" + n);
+  wrap.innerHTML = html;
+  var tags = wrap.getElementsByClassName("ptag");
+  for (var i = 0; i < tags.length; i++) {
+    (function (tag) {
+      tag.addEventListener("click", function () {
+        selProf[n] = tag.getAttribute("data-p") || "";
+        el("pfree" + n).value = "";
+        renderTags(n);
+        updateSave(n);
+      });
+    })(tags[i]);
+  }
+}
+
+function currentCfg(n) {
+  return {
+    profile: effProfile(n),
+    name:    el("dnamein" + n).value.trim(),
+    ip:      el("ip" + n).value.trim(),
+    port:    el("port" + n).value.trim(),
+    unit:    el("unit" + n).value.trim(),
+    en:      el("en" + n).checked ? "1" : "0"
+  };
+}
+
+function isDirty(n) {
+  var s = savedCfg[n];
+  if (!s) return true;
+  var c = currentCfg(n);
+  return c.profile !== s.profile || c.name !== s.name || c.ip !== s.ip ||
+         c.port !== s.port || c.unit !== s.unit || c.en !== s.en;
+}
+
+// Plausibilitaetspruefung VOR dem Speichern - verhindert wilde Kombinationen
+function validateSlot(n) {
+  var c = currentCfg(n);
+  if (c.profile && !/^[A-Za-z0-9_]+$/.test(c.profile)) {
+    return "Profilname: nur Buchstaben/Ziffern/_ (= .lua-Dateiname)";
+  }
+  if (c.ip !== "") {
+    var m = c.ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!m) return "IP-Format ungueltig (z.B. 192.168.20.98)";
+    for (var i = 1; i <= 4; i++) {
+      if (parseInt(m[i], 10) > 255) return "IP-Oktett > 255";
+    }
+  }
+  if (c.port !== "") {
+    var p = parseInt(c.port, 10);
+    if (isNaN(p) || p < 1 || p > 65535 || String(p) !== c.port) return "Port 1..65535 (leer = 502)";
+  }
+  if (c.unit !== "") {
+    var u = parseInt(c.unit, 10);
+    if (isNaN(u) || u < 1 || u > 255 || String(u) !== c.unit) return "Unit 1..255 (leer = 1)";
+  }
+  if (c.en === "1") {
+    if (c.profile === "") return "aktiv gesetzt, aber KEIN Profil gewaehlt";
+    if (c.ip === "")      return "aktiv gesetzt, aber KEINE IP eingetragen";
+  }
+  return "";
+}
+
+function updateSave(n) {
+  var b = el("save" + n), m = el("msg" + n);
+  var dirty = isDirty(n);
+  var err = validateSlot(n);
+  if (!dirty) {
+    b.className = "btn-save clean";
+    b.disabled = true;
+    b.innerText = "Profil geladen";
+    m.innerText = "";
+  } else if (err !== "") {
+    b.className = "btn-save invalid";
+    b.disabled = true;
+    b.innerText = "Eingabe pruefen";
+    m.innerText = err;
+    m.style.color = "#c00";
+  } else {
+    b.className = "btn-save dirty";
+    b.disabled = false;
+    b.innerText = "Speichern + laden";
+    m.innerText = "ungespeicherte Aenderungen";
+    m.style.color = "#d17f2e";
+  }
+}
+
 function buildSlots() {
   var wrap = el("slots");
   var html = "";
   for (var n = 1; n <= NSLOTS; n++) {
-    var opts = KNOWN_PROFILES.map(function (p) {
-      return "<option value='" + p + "'>" + (p || "(leer)") + "</option>";
-    }).join("");
     html +=
       "<div class='slot' id='slot" + n + "'>" +
       "<h3>Slot " + n + "<span class='badge b-off' id='badge" + n + "'>-</span>" +
       "<span class='dname' id='dname" + n + "'></span></h3>" +
+      "<div class='cfg-row'>Profil: <span id='ptags" + n + "'></span> " +
+      "frei: <input type='text' class='pfree' id='pfree" + n + "' placeholder='profilname = .lua-Datei!'></div>" +
       "<div class='cfg-row'>Bezeichnung: <input type='text' id='dnamein" + n + "' placeholder='z.B. Kaco 20 kW NX3'> " +
-      "Profil: <select id='psel" + n + "'>" + opts + "</select> " +
-      "oder frei: <input type='text' id='pfree" + n + "' placeholder='profilname = .lua-Datei!'> " +
       "IP: <input type='text' id='ip" + n + "'> " +
       "Port: <input type='text' class='num' id='port" + n + "' placeholder='502'> " +
       "Unit: <input type='text' class='num' id='unit" + n + "' placeholder='1'> " +
       "<label><input type='checkbox' id='en" + n + "'> aktiv</label> " +
-      "<button id='save" + n + "'>Speichern</button> <span id='msg" + n + "'></span></div>" +
+      "<button id='save" + n + "' class='btn-save clean' disabled>Profil geladen</button> " +
+      "<span id='msg" + n + "'></span></div>" +
       "<div class='cfg-row ctl' id='ctl" + n + "' style='display:none'>" +
       "Wechselrichter-Einspeisung: " +
       "<button class='btn-on' id='con" + n + "'>EIN</button> " +
@@ -122,6 +235,8 @@ function buildSlots() {
   wrap.innerHTML = html;
   for (var m = 1; m <= NSLOTS; m++) {
     (function (n) {
+      selProf[n] = "";
+      renderTags(n);
       el("save" + n).addEventListener("click", function () { saveSlot(n); });
       el("con" + n).addEventListener("click", function () { sendCtl(n, "on"); });
       el("coff" + n).addEventListener("click", function () { sendCtl(n, "off"); });
@@ -129,15 +244,17 @@ function buildSlots() {
       el("cnolim" + n).addEventListener("click", function () { sendCtl(n, "nolimit"); });
       el("clim704" + n).addEventListener("click", function () { sendLimit(n, true); });
       el("cnolim704" + n).addEventListener("click", function () { sendCtl(n, "nolimit704"); });
-      // UX-Fix: Freitext gewinnt beim Speichern ueber das Dropdown.
-      // Damit das nie stillschweigend passiert: Dropdown-Wechsel leert das
-      // Freitextfeld, Tippen im Freitextfeld setzt das Dropdown auf (leer).
-      el("psel" + n).addEventListener("change", function () {
-        el("pfree" + n).value = "";
-      });
+      // Freitext gewinnt ueber die Tags - Tippen deselektiert das Tag sichtbar
       el("pfree" + n).addEventListener("input", function () {
-        if (el("pfree" + n).value.trim() !== "") el("psel" + n).value = "";
+        if (el("pfree" + n).value.trim() !== "") selProf[n] = "";
+        renderTags(n);
+        updateSave(n);
       });
+      // dirty-Tracking: jede Eingabe aktualisiert den Speichern-Button
+      ["dnamein", "ip", "port", "unit"].forEach(function (f) {
+        el(f + n).addEventListener("input", function () { updateSave(n); });
+      });
+      el("en" + n).addEventListener("change", function () { updateSave(n); });
     })(m);
   }
 }
@@ -236,8 +353,10 @@ function loadCfg(n) {
         if (i < 0) return;
         var k = line.substring(0, i), v = line.substring(i + 1).trim();
         if (k === "profile") {
-          if (KNOWN_PROFILES.indexOf(v) >= 0) { el("psel" + n).value = v; el("pfree" + n).value = ""; }
-          else { el("psel" + n).value = ""; el("pfree" + n).value = v; }
+          if (KNOWN_PROFILES.indexOf(v) >= 0) { selProf[n] = v; el("pfree" + n).value = ""; }
+          else if (v === "") { selProf[n] = ""; el("pfree" + n).value = ""; }
+          else { selProf[n] = ""; el("pfree" + n).value = v; }
+          renderTags(n);
           el("ctl" + n).style.display = CONTROL_PROFILES[v] ? "" : "none";
         }
         if (k === "name") { el("dnamein" + n).value = v; el("dname" + n).innerText = v; }
@@ -246,29 +365,40 @@ function loadCfg(n) {
         if (k === "unit") el("unit" + n).value = v;
         if (k === "en")   el("en" + n).checked = (v !== "0");
       });
+      // gespeicherten Zustand merken -> Button wird grau (Profil geladen)
+      savedCfg[n] = currentCfg(n);
+      updateSave(n);
     })
     .catch(function () {});
 }
 
 function saveSlot(n) {
-  var profile = el("pfree" + n).value.trim() || el("psel" + n).value;
-  var dname = el("dnamein" + n).value.trim();
+  var err = validateSlot(n);
+  if (err !== "") {
+    var mm = el("msg" + n);
+    mm.innerText = err;
+    mm.style.color = "#c00";
+    return;
+  }
+  var c = currentCfg(n);
   var q = "slot=" + n +
-          "&profile=" + encodeURIComponent(profile) +
-          "&name=" + encodeURIComponent(dname) +
-          "&ip=" + encodeURIComponent(el("ip" + n).value.trim()) +
-          "&port=" + encodeURIComponent(el("port" + n).value.trim()) +
-          "&unit=" + encodeURIComponent(el("unit" + n).value.trim()) +
-          "&en=" + (el("en" + n).checked ? "1" : "0");
+          "&profile=" + encodeURIComponent(c.profile) +
+          "&name=" + encodeURIComponent(c.name) +
+          "&ip=" + encodeURIComponent(c.ip) +
+          "&port=" + encodeURIComponent(c.port) +
+          "&unit=" + encodeURIComponent(c.unit) +
+          "&en=" + c.en;
   fetch("/cgi-bin/set_dev.cgi?" + q)
     .then(function (r) { return r.text(); })
     .then(function (t) {
       var m = el("msg" + n);
       if (t.indexOf("OK") === 0) {
-        m.innerText = "Gespeichert (Profil: " + (profile || "(leer)") + ") - Poll angefordert.";
+        savedCfg[n] = c;
+        updateSave(n);
+        m.innerText = "Gespeichert (Profil: " + (c.profile || "(leer)") + ") - Poll angefordert.";
         m.style.color = "#080";
-        el("dname" + n).innerText = dname;
-        el("ctl" + n).style.display = CONTROL_PROFILES[profile] ? "" : "none";
+        el("dname" + n).innerText = c.name;
+        el("ctl" + n).style.display = CONTROL_PROFILES[c.profile] ? "" : "none";
       } else {
         m.innerText = t.trim();
         m.style.color = "#c00";
