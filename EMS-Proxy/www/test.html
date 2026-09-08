@@ -17,6 +17,22 @@ button { margin: 2px; }
 .err { color: #c00; }
 .ok { color: #080; }
 pre { background: #f4f4f4; padding: 8px; max-height: 200px; overflow: auto; }
+details.learn { background: #fff; border: 1px solid #ccc; border-radius: 8px;
+                margin: 6px 0; padding: 0; }
+details.learn summary { cursor: pointer; padding: 8px 12px; font-weight: bold;
+                        color: #1a3e6e; user-select: none; }
+details.learn summary:hover { background: #eef2f6; border-radius: 8px; }
+details.learn[open] summary { border-bottom: 1px solid #ddd; background: #eef2f6;
+                              border-radius: 8px 8px 0 0; }
+details.learn .lbody { padding: 8px 14px 10px 14px; font-size: 13px; }
+details.learn ul { margin: 4px 0; padding-left: 20px; }
+details.learn li { margin: 3px 0; }
+details.learn code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px;
+                     font-family: Consolas, monospace; font-size: 12px; }
+.ltag { display: inline-block; padding: 1px 8px; border-radius: 8px; color: #fff;
+        font-size: 11px; font-weight: bold; margin-left: 6px; vertical-align: middle; }
+.ltag.risk { background: #c0392b; }
+.ltag.info { background: #2e7dd1; }
 </style>
 </head>
 <body>
@@ -38,6 +54,93 @@ Schreibbefehle gehen NUR an das BLUESUN/UDAN-EMS. Alle anderen Geraete sind read
   <button id="emergency">NOT-AUS (BLUESUN Standby + 0 kW)</button>
   <b id="guard_state"></b>
 </div>
+
+<h2>Geraete-Learnings (aus docs/Learnings.md - vor dem Testen lesen!)</h2>
+
+<details class="learn">
+<summary>Kaco NX3 (SunSpec, WLAN-Client)<span class="ltag risk">FALLEN</span></summary>
+<div class="lbody"><ul>
+<li><b>KEINE parallelen Verbindungen!</b> Der NX3 vertraegt nur EINEN Modbus-TCP-Client -
+    waehrend Steuerbefehlen muss der Slot-Poll pausieren (Poll-Lock im Watchdog).</li>
+<li><b>Externe Modbus-Freischaltung faellt ab:</b> Die Freigabe in der Kaco-App hielt am
+    2026-09-08 nur Minuten (2 Ausfaelle). Vor jedem Test pruefen:
+    <code>lua /usr/local/bin/mb_cli.lua read IP 502 UNIT 3 40000 3</code> (erwartet 21365 28275 = "SunS").</li>
+<li><b>RvtTms = 300 s:</b> Nach M123-Limit-Aufhebung faehrt der WR erst nach bis zu
+    5 Minuten Rampe zurueck - Geduld, nicht nachschieben!</li>
+<li><b>Limit-Tests NIE unter 10 %</b> (1%-Test hat den WR am 2026-09-07 haengen lassen).</li>
+<li><b>Nachts komplett aus:</b> Kein DC = kein Netzwerk. Diagnose nur bei Tageslicht moeglich.</li>
+<li>Adressen sind <b>modell-relativ</b> (M103+x ab Datenbeginn), Absolutadresse kommt aus dem
+    SunSpec-Scan - keine Absolutadressen hartkodieren (KACO-Vorgabe).</li>
+</ul></div>
+</details>
+
+<details class="learn">
+<summary>Janitza UMG 604 (Netzanschlusszaehler)<span class="ltag info">VERIFIZIERT</span></summary>
+<div class="lbody"><ul>
+<li><b>FC03 (Holding), Float32 Big-Endian</b>, 2 Register je Wert.</li>
+<li>Block-Read <code>19000 x 28</code> deckt U/I/P komplett ab (verifiziert 2026-09-08):
+    19000/02/04 U L1-L3, 19012/14/16 I L1-L3, 19020/22/24 P L1-L3, <b>19026 Psum</b>.</li>
+<li>Plausibilitaet: U L-N ca. 227 V; Psum positiv = Bezug (Vorzeichen noch gegenpruefen!).</li>
+</ul></div>
+</details>
+
+<details class="learn">
+<summary>Solis S6 Hybrid<span class="ltag info">VERIFIZIERT</span></summary>
+<div class="lbody"><ul>
+<li><b>FC04 (Input-Register)</b>, u16/u32be/s32be gemischt - kein Float.</li>
+<li>Batterieleistung 33149 ist <b>vorzeichenlos</b> - Richtung kommt aus 33135
+    (0 = Laden, 1 = Entladen).</li>
+<li>Poll laeuft als 3 Block-Reads (33057x39, 33133x20, 33263x2).</li>
+</ul></div>
+</details>
+
+<details class="learn">
+<summary>BLUESUN / UDAN-EMS (Schreibziel!)<span class="ltag risk">FALLEN</span></summary>
+<div class="lbody"><ul>
+<li><b>Schreibpfad Variante A (0x1500-Block):</b> 0x1500 Modus, 0x1501 Richtung
+    (1 = Laden, 2 = Entladen, 3 = Standby), 0x1502 Leistung (0,1 kW), 0x1503/0x1505 Freigaben
+    (Herstellerantwort 2026-09-04).</li>
+<li><b>200-ms-Limit:</b> Schreibbefehle nicht schneller als alle 200 ms senden.</li>
+<li><b>KEIN eigener Watchdog im EMS!</b> Faellt die Steuerung aus, laeuft der letzte
+    Befehl ewig weiter - deshalb Failsafe im Router (Heartbeat 15 s, nach 60 s ohne
+    Heartbeat automatisch Standby + 0 kW).</li>
+<li>Vorzeichen-Konvention der Testseite: positiv = Entladen, negativ = Laden.</li>
+</ul></div>
+</details>
+
+<details class="learn">
+<summary>Tesvolt EMS / Energy Manager (Quelle)<span class="ltag risk">UNVERIFIZIERT</span></summary>
+<div class="lbody"><ul>
+<li>Marketer-Interface: Register 9-13 (SOC/Power/Watchdog?) sind <b>noch zu verifizieren</b>
+    gegen EN_TESVOLT_Energy_Manager_MarketerInterfaceModbusSpecifications.</li>
+<li>Read-only aus Proxy-Sicht - der Proxy liest die Sollwerte und verteilt sie gewichtet.</li>
+</ul></div>
+</details>
+
+<details class="learn">
+<summary>SMA (Data Manager + Batterie-WR)<span class="ltag risk">UNVERIFIZIERT</span></summary>
+<div class="lbody"><ul>
+<li><b>Unit-ID 2 = Anlage</b> am Data Manager (Unit-ID 1 liefert nur Produktinfo);
+    Batterie-WR selbst typisch Unit-ID 3.</li>
+<li>S32/U32 = 2 Register: Hi- und Lo-Wort einzeln lesen, Wert = Hi*65536 + Lo.</li>
+<li><b>SMA-NaN beachten:</b> S32 = 0x80000000, U32 = 0xFFFFFFFF bedeutet "kein Wert"
+    (z. B. nachts) - nicht als echten Messwert uebernehmen!</li>
+<li>Mapping vorlaeufig - wird vervollstaendigt, sobald der genaue Geraetetyp feststeht
+    (Geraeteliste + Schaubild von Andreas ausstehend).</li>
+</ul></div>
+</details>
+
+<details class="learn">
+<summary>Allgemeine Modbus-Regeln (Projekt)<span class="ltag info">REGELN</span></summary>
+<div class="lbody"><ul>
+<li>Erst <b>lesen und verifizieren</b>, dann schreiben - jedes neue Geraet zuerst hier
+    auf der Testseite abfragen, Werte auf Plausibilitaet pruefen.</li>
+<li>Block-Reads statt Einzel-Reads, wo moeglich (weniger TCP-Verbindungen, weniger
+    Kollisionen mit Cloud/anderen EMS).</li>
+<li>Schreibtests nur mit gesetzter Bestaetigungs-Checkbox und NOT-AUS in Reichweite.</li>
+<li>Vollstaendige Historie: <code>docs/Learnings.md</code> im Repo (datiertes Ledger + Regeln 1-30).</li>
+</ul></div>
+</details>
 
 <h2>EMS-Quellen (steuernde Systeme)</h2>
 
