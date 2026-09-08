@@ -203,10 +203,14 @@ sniff_tick() {
 #   port=N:up|down:<speed>   (je Switch-Port eine Zeile)
 #   ip=<IP>:<Switch-Port>    (je bekanntem Geraet eine Zeile)
 # Die ip=-Zeilen entstehen aus ARP (IP->MAC, /proc/net/arp) plus der
-# Switch-ARL-Tabelle (MAC->Port, swconfig get arl_table). Beide sind
-# LERN-Tabellen: ein Geraet taucht nur auf, wenn es kuerzlich Verkehr
-# hatte (ggf. einmal anpingen). LEARNING: so laesst sich die IP eines
-# Geraets direkt einem physischen Switch-Port zuordnen.
+# Switch-ARL-Tabelle (MAC->Port). LEARNING (verifiziert 2026-09-08 am
+# Hebauer-RUTX11): der ar40xx-Treiber (interner IPQ40xx-Switch) kennt
+# KEIN "arl_table" - das Attribut heisst dort "dump_arl" und liefert
+# das Format "MAC: xx:.. PORTMAP: 0x04 VID: .." (Port als BITMASKE,
+# 0x04 = Bit 2 = Port 2). Externe QCA-Chips (ar8xxx) liefern dagegen
+# "Port N: MAC xx:.." - der Parser unten versteht beide Formate.
+# Beide sind LERN-Tabellen: ein Geraet taucht nur auf, wenn es
+# kuerzlich Verkehr hatte (ggf. einmal anpingen).
 # Die Einstellung ist NICHT reboot-fest (gewollt, Regel 23) und kostet
 # CPU/Durchsatz - nach der Analyse wieder abschalten!
 # ---------------------------------------------------------------------
@@ -276,14 +280,36 @@ mirror_tick() {
             esac
         done
         # IP -> Switch-Port: ARP (IP->MAC) mit ARL-Tabelle (MAC->Port) verknuepfen
-        ARL=$(swconfig dev switch0 get arl_table 2>/dev/null)
+        # ar40xx (RUTX11 intern): Attribut dump_arl; ar8xxx (extern): arl_table
+        ARL=$(swconfig dev switch0 get dump_arl 2>/dev/null)
+        [ -z "$ARL" ] && ARL=$(swconfig dev switch0 get arl_table 2>/dev/null)
         if [ -n "$ARL" ] && [ -r /proc/net/arp ]; then
             while read -r AIP AHW AFLG AMAC AMASK ADEV; do
                 [ "$ADEV" = "br-lan" ] || continue          # nur LAN-Bruecke
                 [ "$AFLG" = "0x0" ] && continue             # unvollstaendige Eintraege
                 case "$AMAC" in *:*) : ;; *) continue ;; esac
                 case "$AMAC" in 00:00:00:00:00:00) continue ;; esac
-                PN=$(echo "$ARL" | grep -iF "$AMAC" | sed -n 's/.*[Pp]ort[: ]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
+                ALINE=$(echo "$ARL" | grep -iF "$AMAC" | head -n 1)
+                [ -z "$ALINE" ] && continue
+                PN=""
+                case "$ALINE" in
+                    *PORTMAP*|*portmap*|*Portmap*)
+                        # ar40xx: "MAC: .. PORTMAP: 0x04 .." -> Bitmaske, niedrigstes Bit = Port
+                        PM=$(echo "$ALINE" | sed -n 's/.*[Pp][Oo][Rr][Tt][Mm][Aa][Pp][: ]*0[xX]\([0-9a-fA-F][0-9a-fA-F]*\).*/\1/p')
+                        if [ -n "$PM" ]; then
+                            PMV=$((0x$PM))
+                            B=0
+                            while [ "$B" -le 5 ]; do
+                                if [ $(( (PMV >> B) & 1 )) -eq 1 ]; then PN=$B; break; fi
+                                B=$((B + 1))
+                            done
+                        fi
+                        ;;
+                    *)
+                        # ar8xxx: "Port N: MAC xx:.."
+                        PN=$(echo "$ALINE" | sed -n 's/.*[Pp]ort[: ]*\([0-9][0-9]*\).*/\1/p')
+                        ;;
+                esac
                 [ -n "$PN" ] && echo "ip=$AIP:$PN"
             done < /proc/net/arp
         fi
