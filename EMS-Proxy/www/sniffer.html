@@ -89,7 +89,7 @@
 <div class="tablewrap" id="tablewrap" style="display:none;">
   <table id="tbl">
     <thead>
-      <tr><th>Zeit</th><th>Quelle</th><th>Ziel</th><th>Unit</th><th>FC</th><th>Typ</th><th>Info</th></tr>
+      <tr><th>Zeit</th><th>Quelle</th><th>SwPort</th><th>Ziel</th><th>SwPort</th><th>Unit</th><th>FC</th><th>Typ</th><th>Info</th></tr>
     </thead>
     <tbody id="tbody"></tbody>
   </table>
@@ -97,7 +97,9 @@
 
 <div class="box" style="margin-top:14px;">
   <b>Port-Mirroring</b>
-  <span style="color:#8a94a3; font-size:0.85em;"> - Quellport anklicken, Haken setzen, einschalten. Gruen = Link aktiv. Nicht reboot-fest.</span>
+  <span style="color:#8a94a3; font-size:0.85em;"> - Quellport anklicken, Haken setzen, einschalten. Gruen = Link aktiv. Nicht reboot-fest.
+    Unter jedem Port stehen die dort erkannten Geraete-IPs (aus ARP und Switch-Lerntabelle -
+    ein Geraet erscheint nur, wenn es kuerzlich Verkehr hatte, notfalls einmal anpingen).</span>
   <div id="mports" style="margin-top:8px;">Lade Portstatus...</div>
   <div class="row" style="margin-top:8px;">
     <label class="chk"><input type="checkbox" id="mrx" checked> RX (empfangen) mitschneiden</label>
@@ -226,10 +228,24 @@ function pollStatus() {
     });
 }
 
+var lastResult = null;
+
+function swPortOf(addr) {
+  // addr = "192.168.20.98:502" -> Switch-Port der IP (aus ipMap) oder "-"
+  var ip = String(addr).split(":")[0];
+  return ipMap[ip] || "-";
+}
+
 function loadResult() {
   fetch("cgi-bin/sniff_ctl.cgi?cmd=result&_=" + Date.now())
     .then(function(r){ return r.text(); })
     .then(function(t){
+      lastResult = t;
+      renderResult(t);
+    });
+}
+
+function renderResult(t) {
       var lines = t.split("\n");
       var tbody = document.getElementById("tbody");
       tbody.innerHTML = "";
@@ -243,7 +259,7 @@ function loadResult() {
         if (c[5] === "W") { tr.className = "w"; }
         else if (c[5] === "X") { tr.className = "x"; }
         var typTxt = {R:"Lesen", W:"SCHREIBEN", A:"Antwort", X:"EXCEPTION"}[c[5]] || c[5];
-        var cells = [c[0], c[1], c[2], c[3], c[4], typTxt, c[6]];
+        var cells = [c[0], c[1], swPortOf(c[1]), c[2], swPortOf(c[2]), c[3], c[4], typTxt, c[6]];
         for (var j = 0; j < cells.length; j++) {
           var td = document.createElement("td");
           td.textContent = cells[j];
@@ -258,13 +274,13 @@ function loadResult() {
       setMsg('<div class="box">' + total + " Modbus-Paket(e) erfasst" +
              (n === 0 ? " - kein Verkehr auf Port 502 gesehen (ggf. Port-Mirroring noetig, s.u.)" : "") +
              "</div>");
-    });
 }
 
 // ---------------- Port-Mirroring UI ----------------
 var selPort = null;
 var mirrorOn = false;
 var mirrorSrc = "";
+var ipMap = {};   // "192.168.20.98" -> "3" (Switch-Port, aus ARP + ARL-Tabelle)
 
 function setMMsg(txt) { document.getElementById("mmsg").textContent = txt; }
 
@@ -272,6 +288,7 @@ function renderMirror(txt) {
   var lines = txt.split("\n");
   var ports = [];
   var mrx = "0", mtx = "0", msrc = "";
+  var newMap = {};
   for (var i = 0; i < lines.length; i++) {
     var ln = lines[i].trim();
     if (ln.indexOf("ERR") === 0) {
@@ -286,9 +303,24 @@ function renderMirror(txt) {
       var c = ln.substring(5).split(":");
       ports.push({ n: c[0], up: c[1] === "up", spd: c[2] || "" });
     }
+    if (ln.indexOf("ip=") === 0) {
+      var m = ln.substring(3);
+      var pos = m.lastIndexOf(":");
+      if (pos > 0) { newMap[m.substring(0, pos)] = m.substring(pos + 1); }
+    }
   }
   mirrorOn = (mrx === "1" || mtx === "1");
   mirrorSrc = msrc;
+  // IP->Port-Zuordnung uebernehmen; bei Aenderung Capture-Tabelle neu rendern
+  var mapChanged = (JSON.stringify(newMap) !== JSON.stringify(ipMap));
+  ipMap = newMap;
+  if (mapChanged && lastResult !== null) { renderResult(lastResult); }
+  // Umkehrung: Switch-Port -> Liste der IPs (fuer die Port-Tags)
+  var byPort = {};
+  for (var ip in ipMap) {
+    if (!byPort[ipMap[ip]]) { byPort[ipMap[ip]] = []; }
+    byPort[ipMap[ip]].push(ip);
+  }
 
   var wrap = document.getElementById("mports");
   wrap.innerHTML = "";
@@ -303,7 +335,12 @@ function renderMirror(txt) {
     var spdTxt = p.spd === "1000" ? "1 GBit" : (p.spd === "100" ? "100 MBit" : (p.spd === "10" ? "10 MBit" : ""));
     var sub = p.up ? (spdTxt || "Link up") : "kein Link";
     if (mirrorOn && p.n === msrc) { sub = "wird gespiegelt"; }
-    tag.innerHTML = "Port " + p.n + "<small>" + sub + "</small>";
+    var ipsHtml = "";
+    if (byPort[p.n]) {
+      byPort[p.n].sort();
+      ipsHtml = "<small>" + byPort[p.n].join("<br>") + "</small>";
+    }
+    tag.innerHTML = "Port " + p.n + "<small>" + sub + "</small>" + ipsHtml;
     tag.setAttribute("data-port", p.n);
     tag.onclick = function() {
       if (mirrorOn) { return; }

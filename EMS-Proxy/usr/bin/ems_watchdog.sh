@@ -201,6 +201,12 @@ sniff_tick() {
 # Port-/Mirror-Status alle 10 s nach /tmp/emsproxy_swports:
 #   ts=<unix>  mirror_rx=0/1  mirror_tx=0/1  mirror_src=N  mirror_mon=N
 #   port=N:up|down:<speed>   (je Switch-Port eine Zeile)
+#   ip=<IP>:<Switch-Port>    (je bekanntem Geraet eine Zeile)
+# Die ip=-Zeilen entstehen aus ARP (IP->MAC, /proc/net/arp) plus der
+# Switch-ARL-Tabelle (MAC->Port, swconfig get arl_table). Beide sind
+# LERN-Tabellen: ein Geraet taucht nur auf, wenn es kuerzlich Verkehr
+# hatte (ggf. einmal anpingen). LEARNING: so laesst sich die IP eines
+# Geraets direkt einem physischen Switch-Port zuordnen.
 # Die Einstellung ist NICHT reboot-fest (gewollt, Regel 23) und kostet
 # CPU/Durchsatz - nach der Analyse wieder abschalten!
 # ---------------------------------------------------------------------
@@ -269,6 +275,18 @@ mirror_tick() {
                     ;;
             esac
         done
+        # IP -> Switch-Port: ARP (IP->MAC) mit ARL-Tabelle (MAC->Port) verknuepfen
+        ARL=$(swconfig dev switch0 get arl_table 2>/dev/null)
+        if [ -n "$ARL" ] && [ -r /proc/net/arp ]; then
+            while read -r AIP AHW AFLG AMAC AMASK ADEV; do
+                [ "$ADEV" = "br-lan" ] || continue          # nur LAN-Bruecke
+                [ "$AFLG" = "0x0" ] && continue             # unvollstaendige Eintraege
+                case "$AMAC" in *:*) : ;; *) continue ;; esac
+                case "$AMAC" in 00:00:00:00:00:00) continue ;; esac
+                PN=$(echo "$ARL" | grep -iF "$AMAC" | sed -n 's/.*[Pp]ort[: ]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
+                [ -n "$PN" ] && echo "ip=$AIP:$PN"
+            done < /proc/net/arp
+        fi
     } > /tmp/emsproxy_swports.tmp 2>/dev/null
     mv /tmp/emsproxy_swports.tmp /tmp/emsproxy_swports 2>/dev/null
     chmod 644 /tmp/emsproxy_swports 2>/dev/null
