@@ -8,6 +8,11 @@
  h1 { font-size:1.3em; margin:0 0 4px 0; }
  .sub { color:#8a94a3; font-size:0.85em; margin-bottom:14px; }
  a { color:#5aa9ff; }
+ .nav { margin: 0 0 14px 0; }
+ .nav a { display:inline-block; padding:8px 20px; margin-right:8px; background:#1a2029; border:1px solid #2a3342;
+          color:#dde3ea; text-decoration:none; border-radius:6px; font-weight:bold; font-size:14px; }
+ .nav a:hover { background:#2563eb; color:#fff; }
+ .nav a.active { background:#2563eb; color:#fff; border-color:#2563eb; }
  .box { background:#1a2029; border:1px solid #2a3342; border-radius:8px; padding:12px 14px; margin-bottom:14px; }
  .warnbox { border-color:#7a5c1e; background:#241d10; }
  .infobox { border-color:#1e4a6e; background:#101c26; }
@@ -34,9 +39,17 @@
 <body>
 
 <h1>Modbus-Sniffer (passiv)</h1>
+
+<div class="nav">
+  <a href="/status.html">Status</a>
+  <a href="/setup.html">Setup</a>
+  <a href="/test.html">Geraete-Test</a>
+  <a href="/devices.html">Geraete-Slots</a>
+  <a href="/sniffer.html" class="active">Sniffer</a>
+</div>
+
 <div class="sub">
   Liest Modbus-TCP-Verkehr (Port 502) auf br-lan mit - greift NICHT ein, verhindert nichts.
-  &nbsp;|&nbsp; <a href="devices.html">Geraete</a> &nbsp;|&nbsp; <a href="status.html">Status</a> &nbsp;|&nbsp; <a href="setup.html">Setup</a>
 </div>
 
 <div class="box">
