@@ -27,7 +27,7 @@ SLOT=$(echo "$QUERY_STRING" | sed -n 's/.*slot=\([1-4]\).*/\1/p')
 
 case "$QUERY_STRING" in
   *cfg=1*)
-    for k in profile ip port unit en; do
+    for k in profile name ip port unit en; do
       echo "$k=$(cat /etc/tesvolt_dev${SLOT}_${k} 2>/dev/null)"
     done
     exit 0 ;;

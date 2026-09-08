@@ -14,6 +14,7 @@
   .slot h3 { margin: 2px 0 10px 0; color: #1a3e6e; }
   .cfg-row { margin: 4px 0; font-size: 14px; }
   .cfg-row input[type=text] { width: 150px; }
+  .dname { color: #555; font-weight: normal; font-size: 15px; margin-left: 10px; }
   .cfg-row input.num { width: 60px; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; color: #fff;
            font-weight: bold; font-size: 12px; margin-left: 8px; }
@@ -94,8 +95,10 @@ function buildSlots() {
     }).join("");
     html +=
       "<div class='slot' id='slot" + n + "'>" +
-      "<h3>Slot " + n + "<span class='badge b-off' id='badge" + n + "'>-</span></h3>" +
-      "<div class='cfg-row'>Profil: <select id='psel" + n + "'>" + opts + "</select> " +
+      "<h3>Slot " + n + "<span class='badge b-off' id='badge" + n + "'>-</span>" +
+      "<span class='dname' id='dname" + n + "'></span></h3>" +
+      "<div class='cfg-row'>Bezeichnung: <input type='text' id='dnamein" + n + "' placeholder='z.B. Kaco 20 kW NX3'> " +
+      "Profil: <select id='psel" + n + "'>" + opts + "</select> " +
       "oder frei: <input type='text' id='pfree" + n + "' placeholder='profilname = .lua-Datei!'> " +
       "IP: <input type='text' id='ip" + n + "'> " +
       "Port: <input type='text' class='num' id='port" + n + "' placeholder='502'> " +
@@ -237,6 +240,7 @@ function loadCfg(n) {
           else { el("psel" + n).value = ""; el("pfree" + n).value = v; }
           el("ctl" + n).style.display = CONTROL_PROFILES[v] ? "" : "none";
         }
+        if (k === "name") { el("dnamein" + n).value = v; el("dname" + n).innerText = v; }
         if (k === "ip")   el("ip" + n).value = v;
         if (k === "port") el("port" + n).value = v;
         if (k === "unit") el("unit" + n).value = v;
@@ -248,8 +252,10 @@ function loadCfg(n) {
 
 function saveSlot(n) {
   var profile = el("pfree" + n).value.trim() || el("psel" + n).value;
+  var dname = el("dnamein" + n).value.trim();
   var q = "slot=" + n +
           "&profile=" + encodeURIComponent(profile) +
+          "&name=" + encodeURIComponent(dname) +
           "&ip=" + encodeURIComponent(el("ip" + n).value.trim()) +
           "&port=" + encodeURIComponent(el("port" + n).value.trim()) +
           "&unit=" + encodeURIComponent(el("unit" + n).value.trim()) +
@@ -261,6 +267,7 @@ function saveSlot(n) {
       if (t.indexOf("OK") === 0) {
         m.innerText = "Gespeichert (Profil: " + (profile || "(leer)") + ") - Poll angefordert.";
         m.style.color = "#080";
+        el("dname" + n).innerText = dname;
         el("ctl" + n).style.display = CONTROL_PROFILES[profile] ? "" : "none";
       } else {
         m.innerText = t.trim();
