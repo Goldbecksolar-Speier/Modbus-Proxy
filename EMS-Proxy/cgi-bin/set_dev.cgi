@@ -17,6 +17,36 @@ SLOT=$(echo "$Q" | sed -n 's/.*slot=\([1-4]\).*/\1/p')
 
 getp() { echo "$Q" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1; }
 
+# ---------------------------------------------------------------------
+# Teil-Updates (Pipeline Slots -> Setup -> Status):
+#   ?slot=N&insetup=0|1   -> nur Setup-Flag schreiben
+#   ?slot=N&mon=k1,k2,... -> nur Monitoring-Keyliste schreiben
+# Kein cfgchange/poll-Marker - reine Anzeige-Konfiguration.
+# Die Dateien /etc/tesvolt_devN_insetup und _mon legt der Watchdog
+# (root) beim naechsten Tick an - uhttpd darf in /etc nichts NEU anlegen.
+# ---------------------------------------------------------------------
+case "$Q" in
+  *insetup=*)
+    V=$(getp insetup | tr -cd '01' | cut -c1)
+    [ -n "$V" ] || V=0
+    F="/etc/tesvolt_dev${SLOT}_insetup"
+    if [ -f "$F" ] && echo "$V" 2>/dev/null > "$F"; then
+      echo "OK slot=$SLOT insetup=$V"
+    else
+      echo "FEHLER:$F fehlt oder nicht schreibbar (Watchdog legt Datei beim naechsten Tick an - Watchdog aktualisieren und neu starten)"
+    fi
+    exit 0 ;;
+  *mon=*)
+    V=$(getp mon | tr -cd 'A-Za-z0-9_,' | cut -c1-500)
+    F="/etc/tesvolt_dev${SLOT}_mon"
+    if [ -f "$F" ] && echo "$V" 2>/dev/null > "$F"; then
+      echo "OK slot=$SLOT mon=$V"
+    else
+      echo "FEHLER:$F fehlt oder nicht schreibbar (Watchdog legt Datei beim naechsten Tick an - Watchdog aktualisieren und neu starten)"
+    fi
+    exit 0 ;;
+esac
+
 # Eingaben strikt filtern (Profilname-Whitelist wie profile_loader.lua)
 PROFILE=$(getp profile | tr -cd 'A-Za-z0-9_-')
 # Bezeichnung: +/%20 -> Leerzeichen, dann Whitelist, max 40 Zeichen
