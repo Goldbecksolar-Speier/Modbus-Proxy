@@ -16,7 +16,6 @@
   .cfg-row input[type=text] { width: 150px; }
   .dname { color: #555; font-weight: normal; font-size: 15px; margin-left: 10px; }
   .cfg-row input.num { width: 60px; }
-  .cfg-row input.pfree { width: 170px; }
   .ptag { display: inline-block; padding: 4px 12px; margin: 2px 3px; border: 1px solid #9ab;
           border-radius: 6px; background: #eef2f6; color: #1a3e6e; cursor: pointer;
           font-size: 13px; font-weight: bold; user-select: none; }
@@ -89,7 +88,8 @@
 <script>
 var NSLOTS = 4;
 
-// bekannte Profile als anklickbare Tags (freies Textfeld bleibt moeglich)
+// Profile sind hartkodiert (= .lua-Dateien) - Auswahl NUR ueber die Tags,
+// neue Profile entstehen per Code (Chat -> Repo -> github_update)
 var KNOWN_PROFILES = ["solis_s6_hybrid", "kaco_nx3_sunspec", "janitza_umg604",
                       "tesvolt_bat", "bluesun_udan"];
 
@@ -104,17 +104,20 @@ var selProf = {};
 var savedCfg = {};
 
 function effProfile(n) {
-  var f = el("pfree" + n).value.trim();
-  return f !== "" ? f : (selProf[n] || "");
+  return selProf[n] || "";
 }
 
 function renderTags(n) {
-  var html = "<span class='ptag" + (selProf[n] === "" && el("pfree" + n).value.trim() === "" ? " active" : "") +
+  var html = "<span class='ptag" + (selProf[n] === "" ? " active" : "") +
              "' data-p=''>(leer)</span>";
   KNOWN_PROFILES.forEach(function (p) {
     html += "<span class='ptag" + (selProf[n] === p ? " active" : "") +
             "' data-p='" + p + "'>" + p + "</span>";
   });
+  // unbekanntes Profil aus alter Konfig als zusaetzliches Tag anzeigen
+  if (selProf[n] !== "" && KNOWN_PROFILES.indexOf(selProf[n]) < 0) {
+    html += "<span class='ptag active' data-p='" + selProf[n] + "'>" + selProf[n] + "</span>";
+  }
   var wrap = el("ptags" + n);
   wrap.innerHTML = html;
   var tags = wrap.getElementsByClassName("ptag");
@@ -122,7 +125,6 @@ function renderTags(n) {
     (function (tag) {
       tag.addEventListener("click", function () {
         selProf[n] = tag.getAttribute("data-p") || "";
-        el("pfree" + n).value = "";
         renderTags(n);
         updateSave(n);
       });
@@ -209,8 +211,7 @@ function buildSlots() {
       "<div class='slot' id='slot" + n + "'>" +
       "<h3>Slot " + n + "<span class='badge b-off' id='badge" + n + "'>-</span>" +
       "<span class='dname' id='dname" + n + "'></span></h3>" +
-      "<div class='cfg-row'>Profil: <span id='ptags" + n + "'></span> " +
-      "frei: <input type='text' class='pfree' id='pfree" + n + "' placeholder='profilname = .lua-Datei!'></div>" +
+      "<div class='cfg-row'>Profil: <span id='ptags" + n + "'></span></div>" +
       "<div class='cfg-row'>Bezeichnung: <input type='text' id='dnamein" + n + "' placeholder='z.B. Kaco 20 kW NX3'> " +
       "IP: <input type='text' id='ip" + n + "'> " +
       "Port: <input type='text' class='num' id='port" + n + "' placeholder='502'> " +
@@ -244,12 +245,6 @@ function buildSlots() {
       el("cnolim" + n).addEventListener("click", function () { sendCtl(n, "nolimit"); });
       el("clim704" + n).addEventListener("click", function () { sendLimit(n, true); });
       el("cnolim704" + n).addEventListener("click", function () { sendCtl(n, "nolimit704"); });
-      // Freitext gewinnt ueber die Tags - Tippen deselektiert das Tag sichtbar
-      el("pfree" + n).addEventListener("input", function () {
-        if (el("pfree" + n).value.trim() !== "") selProf[n] = "";
-        renderTags(n);
-        updateSave(n);
-      });
       // dirty-Tracking: jede Eingabe aktualisiert den Speichern-Button
       ["dnamein", "ip", "port", "unit"].forEach(function (f) {
         el(f + n).addEventListener("input", function () { updateSave(n); });
@@ -353,9 +348,7 @@ function loadCfg(n) {
         if (i < 0) return;
         var k = line.substring(0, i), v = line.substring(i + 1).trim();
         if (k === "profile") {
-          if (KNOWN_PROFILES.indexOf(v) >= 0) { selProf[n] = v; el("pfree" + n).value = ""; }
-          else if (v === "") { selProf[n] = ""; el("pfree" + n).value = ""; }
-          else { selProf[n] = ""; el("pfree" + n).value = v; }
+          selProf[n] = v;
           renderTags(n);
           el("ctl" + n).style.display = CONTROL_PROFILES[v] ? "" : "none";
         }
