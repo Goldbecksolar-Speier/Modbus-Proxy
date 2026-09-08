@@ -12,6 +12,12 @@
   .dev-row { margin: 4px 0; }
   .dev-row input[type=text] { width: 160px; }
   .dev-off { color: #999; }
+  .mon-dev { background: #fff; border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; margin: 8px 0; }
+  .mon-dev h4 { margin: 0 0 6px 0; color: #1a3e6e; }
+  .mon-keys label { display: inline-block; margin: 2px 12px 2px 0; font-size: 13px; }
+  .mon-btn { border: 0; border-radius: 5px; padding: 5px 14px; font-weight: bold; cursor: pointer; margin-right: 6px; }
+  .mon-save { background: #1a7a2e; color: #fff; }
+  .mon-del { background: #c0392b; color: #fff; }
 </style>
 </head>
 <body>
@@ -67,6 +73,15 @@
   es wird dann nicht direkt angesprochen.
   Reine LESE-Geraete (Wechselrichter, Zaehler) werden auf der Seite
   <a href="/devices.html">Geraete-Slots</a> konfiguriert.</small>
+</div>
+
+<div>
+  <h3>Monitoring-Geraete (aus Geraete-Slots uebernommen)</h3>
+  <small>Geraete erscheinen hier, sobald sie auf der Seite
+  <a href="/devices.html">Geraete-Slots</a> per gruenem &quot;-&gt; Setup&quot;-Button
+  uebernommen wurden. Angehakte Werte werden auf der
+  <a href="/status.html">Status</a>-Seite im Slot-Monitoring angezeigt.</small>
+  <div id="mon_wrap">lade ...</div>
 </div>
 
 <div>
@@ -133,6 +148,125 @@ function updateDevRows() {
     ip.disabled = !on;
     ip.parentElement.className = on ? "dev-row" : "dev-row dev-off";
   });
+}
+
+// ---------------------------------------------------------------------
+// Monitoring-Geraete: Slots mit insetup=1 anzeigen, Werte-Checkboxen
+// aus dem letzten Poll-Status, Auswahl -> /etc/tesvolt_devN_mon.
+// Meta-Schluessel und err_* werden nicht als waehlbare Werte angeboten.
+// ---------------------------------------------------------------------
+var MON_META = { ts: 1, slot: 1, profile: 1, enabled: 1, unverified: 1,
+                 scan_base: 1, points_ok: 1, points_err: 1, error: 1 };
+var MON_NSLOTS = 4;
+
+function parseKv(t) {
+  var kv = {}, order = [];
+  t.split("\n").forEach(function (line) {
+    var i = line.indexOf("=");
+    if (i < 0) return;
+    var k = line.substring(0, i);
+    kv[k] = line.substring(i + 1).trim();
+    order.push(k);
+  });
+  return { kv: kv, order: order };
+}
+
+function monSave(n) {
+  var keys = [];
+  var boxes = document.querySelectorAll("#mondev" + n + " input[type=checkbox]");
+  for (var i = 0; i < boxes.length; i++) {
+    if (boxes[i].checked) keys.push(boxes[i].getAttribute("data-key"));
+  }
+  fetch("/cgi-bin/set_dev.cgi?slot=" + n + "&mon=" + encodeURIComponent(keys.join(",")))
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var m = document.getElementById("monmsg" + n);
+      m.innerText = (t.indexOf("OK") === 0)
+        ? "Gespeichert (" + keys.length + " Werte) - sichtbar auf der Status-Seite."
+        : t.trim();
+      m.style.color = (t.indexOf("OK") === 0) ? "#080" : "#c00";
+    })
+    .catch(function () {
+      var m = document.getElementById("monmsg" + n);
+      m.innerText = "HTTP-Fehler!";
+      m.style.color = "#c00";
+    });
+}
+
+function monRemove(n) {
+  if (!confirm("Slot " + n + " aus dem Setup-Monitoring entfernen?")) return;
+  fetch("/cgi-bin/set_dev.cgi?slot=" + n + "&insetup=0")
+    .then(function (r) { return r.text(); })
+    .then(function () { loadMonDevices(); })
+    .catch(function () {});
+}
+
+function monRenderDev(n, cfg) {
+  fetch("/cgi-bin/read_dev.cgi?slot=" + n)
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      t = t.trim();
+      var wrap = document.getElementById("mondev" + n);
+      if (!wrap) return;
+      var selected = {};
+      (cfg.mon || "").split(",").forEach(function (k) { if (k) selected[k] = 1; });
+      var html = "<h4>Slot " + n + ": " + (cfg.name || cfg.profile || "?") +
+                 " <small>(" + (cfg.profile || "?") + ", " + (cfg.ip || "?") + ")</small></h4>";
+      if (t === "NOSTATUS" || t === "") {
+        html += "<small>Noch kein Poll-Ergebnis - Werteliste erscheint nach dem naechsten Watchdog-Poll.</small><br>";
+      } else {
+        var p = parseKv(t);
+        html += "<div class='mon-keys'>";
+        var count = 0;
+        p.order.forEach(function (k) {
+          if (MON_META[k] || k.indexOf("err_") === 0) return;
+          count++;
+          html += "<label><input type='checkbox' data-key='" + k + "'" +
+                  (selected[k] ? " checked" : "") + "> " + k +
+                  " <span style='color:#888'>(" + p.kv[k] + ")</span></label>";
+        });
+        html += "</div>";
+        if (count === 0) html += "<small>Keine Messwerte im letzten Poll.</small><br>";
+      }
+      html += "<button class='mon-btn mon-save' onclick='monSave(" + n + ")'>Auswahl speichern</button>" +
+              "<button class='mon-btn mon-del' onclick='monRemove(" + n + ")'>Entfernen</button>" +
+              "<span id='monmsg" + n + "'></span>";
+      wrap.innerHTML = html;
+    })
+    .catch(function () {});
+}
+
+function loadMonDevices() {
+  var wrap = document.getElementById("mon_wrap");
+  var pending = MON_NSLOTS, found = 0;
+  wrap.innerHTML = "";
+  for (var n = 1; n <= MON_NSLOTS; n++) {
+    (function (n) {
+      fetch("/cgi-bin/read_dev.cgi?slot=" + n + "&cfg=1")
+        .then(function (r) { return r.text(); })
+        .then(function (t) {
+          var cfg = parseKv(t).kv;
+          if (cfg.insetup === "1") {
+            found++;
+            var d = document.createElement("div");
+            d.className = "mon-dev";
+            d.id = "mondev" + n;
+            d.innerText = "lade Slot " + n + " ...";
+            wrap.appendChild(d);
+            monRenderDev(n, cfg);
+          }
+        })
+        .catch(function () {})
+        .then(function () {
+          pending--;
+          if (pending === 0 && found === 0) {
+            wrap.innerHTML = "<small>Keine Geraete uebernommen. Auf der Seite " +
+              "<a href='/devices.html'>Geraete-Slots</a> ein erfolgreich gepolltes " +
+              "Geraet mit dem gruenen &quot;-&gt; Setup&quot;-Button uebernehmen.</small>";
+          }
+        });
+    })(n);
+  }
 }
 
 function loadConfig() {
@@ -241,6 +375,7 @@ document.getElementById("stop_btn").addEventListener("click", function () {
 loadConfig();
 refreshStatus();
 setInterval(refreshStatus, 5000);
+loadMonDevices();
 </script>
 
 </body>
