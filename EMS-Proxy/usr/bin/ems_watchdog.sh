@@ -101,6 +101,27 @@ failsafe() {
 # ---------------------------------------------------------------------
 DEV_LAST_POLL=0
 
+# Neue Slot-Konfigdateien anlegen, die set_dev.cgi (User uhttpd) nicht
+# selbst in /etc anlegen darf (nur root darf dort neue Dateien erzeugen;
+# die uebrigen tesvolt_devN_* hat der Installer angelegt). Besitzer wird
+# von der vorhandenen _profile-Datei uebernommen, Fallback chmod 666.
+dev_cfg_ensure() {
+    for n in 1 2 3 4; do
+        f="/etc/tesvolt_dev${n}_name"
+        [ -f "$f" ] && continue
+        touch "$f" 2>/dev/null || continue
+        REF="/etc/tesvolt_dev${n}_profile"
+        OWN=""
+        [ -f "$REF" ] && OWN=$(ls -l "$REF" 2>/dev/null | awk '{print $3}')
+        if [ -n "$OWN" ] && chown "$OWN" "$f" 2>/dev/null; then
+            :
+        else
+            chmod 666 "$f" 2>/dev/null
+        fi
+        logmsg "Geraeteslot $n: $f angelegt (fuer Bezeichnungsfeld)"
+    done
+}
+
 dev_poll_interval() {
     I=$(cat /etc/tesvolt_dev_poll_interval 2>/dev/null | tr -cd '0-9')
     [ -z "$I" ] && I=60
@@ -110,6 +131,8 @@ dev_poll_interval() {
 }
 
 device_poll_tick() {
+    # fehlende Slot-Konfigdateien anlegen (billig: nur [ -f ]-Checks)
+    dev_cfg_ensure
     # Konfigaenderung (set_dev.cgi): Scan-Cache + Status verwerfen
     for n in 1 2 3 4; do
         if [ -f "/tmp/emsproxy_dev${n}_cfgchange" ]; then
