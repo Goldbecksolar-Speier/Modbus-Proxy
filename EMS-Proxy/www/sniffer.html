@@ -160,6 +160,7 @@ swconfig dev switch0 set apply 1</pre>
 var pollTimer = null;
 var awaitingRun = false;  // nach Start-Klick: altes DONE ignorieren bis RUNNING gesehen
 var reqTs = 0;
+var runSeenTs = 0;        // Browser-Zeit beim ersten RUNNING (Countdown unabhaengig von Router-Uhr)
 
 function setState(txt, cls) {
   var el = document.getElementById("state");
@@ -186,6 +187,7 @@ function startCap() {
         setMsg("");
         awaitingRun = true;
         reqTs = Date.now();
+        runSeenTs = 0;
         document.getElementById("stopbtn").disabled = false;
         setState("angefordert...", "st-run");
         startPolling();
@@ -217,10 +219,15 @@ function pollStatus() {
       t = t.trim();
       if (t.indexOf("RUNNING") === 0) {
         awaitingRun = false;
+        if (runSeenTs === 0) { runSeenTs = Date.now(); }
         var parts = t.split(":");
         var start = parseInt(parts[1], 10) || 0;
         var dur   = parseInt(parts[2], 10) || 0;
-        var left  = dur - (Math.floor(Date.now() / 1000) - start);
+        // Router-Uhr kann von der Browser-Uhr abweichen -> Serverwert nur
+        // verwenden wenn plausibel, sonst rein browserseitig zaehlen
+        var leftSrv = dur - (Math.floor(Date.now() / 1000) - start);
+        var leftCli = dur - Math.floor((Date.now() - runSeenTs) / 1000);
+        var left = (leftSrv > 0 && leftSrv <= dur) ? leftSrv : leftCli;
         if (left < 0) { left = 0; }
         setState("Capture laeuft - noch ~" + left + " s", "st-run");
         setStartBtn("laeuft... " + left + " s", true);
