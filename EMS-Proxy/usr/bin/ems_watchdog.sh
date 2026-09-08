@@ -15,6 +15,9 @@
 #    frisch gelesen, Aenderung wirkt ohne Neustart. Wichtig, wenn
 #    mehrere Master (Cloud, EMS) dieselben Geraete abfragen: laengeres
 #    Intervall = weniger Kollisionen (z.B. Kaco NX3, Solis-Cloud).
+#  * Sniffer (sniffer.html): startet auf Marker-Anforderung ein
+#    passives tcpdump-Capture (Port 502) - CGIs laufen als uhttpd
+#    und duerfen kein tcpdump starten, deshalb macht es der Watchdog.
 #  * repariert fehlende Konfigdateien
 #  * einfache Logrotation (max. 500 kB)
 #  * kill per PID statt killall (sauberer auf BusyBox)
@@ -131,6 +134,62 @@ device_poll_tick() {
     DEV_LAST_POLL=$NOW
 }
 
+# ---------------------------------------------------------------------
+# Sniffer (sniffer.html): REIN PASSIVES tcpdump-Capture auf Port 502.
+# uhttpd->root-Kanal (Regel 18): sniff_ctl.cgi legt Marker an,
+# der Watchdog (root) fuehrt aus:
+#   /tmp/emsproxy_sniff_req   = Capture starten (Inhalt: Dauer in s)
+#   /tmp/emsproxy_sniff_stop  = laufendes Capture vorzeitig beenden
+#   /tmp/emsproxy_sniff_state = RUNNING:<start>:<dauer> | DONE:<ende> | ERROR:...
+#   /tmp/emsproxy_sniff.pcap  = Rohdaten (RAM, max. 2000 Pakete)
+#   /tmp/emsproxy_sniff.txt   = geparste Zeilen (sniff_parse.lua)
+# Capture laeuft als Hintergrund-Subshell - der 5-s-Tick blockiert nicht.
+# ---------------------------------------------------------------------
+sniff_tick() {
+    [ -f /tmp/emsproxy_sniff_req ] || return
+    DUR=$(cat /tmp/emsproxy_sniff_req 2>/dev/null | tr -cd '0-9')
+    rm -f /tmp/emsproxy_sniff_req
+    [ -z "$DUR" ] && DUR=60
+    [ "$DUR" -lt 10 ] && DUR=10
+    [ "$DUR" -gt 300 ] && DUR=300
+    if [ -f /tmp/emsproxy_sniff_state ] && grep -q '^RUNNING' /tmp/emsproxy_sniff_state 2>/dev/null; then
+        logmsg "Sniffer: Anforderung ignoriert - Capture laeuft bereits"
+        return
+    fi
+    if ! command -v tcpdump >/dev/null 2>&1; then
+        echo "ERROR:tcpdump nicht installiert - auf dem Router: opkg update; opkg install tcpdump" > /tmp/emsproxy_sniff_state
+        chmod 644 /tmp/emsproxy_sniff_state
+        logmsg "Sniffer: tcpdump fehlt (opkg install tcpdump)"
+        return
+    fi
+    echo "RUNNING:$(date +%s):$DUR" > /tmp/emsproxy_sniff_state
+    chmod 644 /tmp/emsproxy_sniff_state
+    logmsg "Sniffer: Capture gestartet (Port 502, ${DUR}s, br-lan)"
+    (
+        rm -f /tmp/emsproxy_sniff.pcap /tmp/emsproxy_sniff_stop
+        tcpdump -i br-lan -nn -s 128 -c 2000 -w /tmp/emsproxy_sniff.pcap port 502 2>/tmp/emsproxy_sniff_err &
+        TPID=$!
+        SLEPT=0
+        while [ "$SLEPT" -lt "$DUR" ]; do
+            sleep 2
+            SLEPT=$((SLEPT + 2))
+            [ -f /tmp/emsproxy_sniff_stop ] && break
+            kill -0 "$TPID" 2>/dev/null || break   # -c 2000 erreicht
+        done
+        rm -f /tmp/emsproxy_sniff_stop
+        kill "$TPID" 2>/dev/null
+        sleep 1
+        if [ -s /tmp/emsproxy_sniff.pcap ]; then
+            lua /usr/local/bin/sniff_parse.lua /tmp/emsproxy_sniff.pcap > /tmp/emsproxy_sniff.txt 2>>/tmp/emsproxy_sniff_err
+        else
+            echo "#COUNT=0" > /tmp/emsproxy_sniff.txt
+        fi
+        chmod 644 /tmp/emsproxy_sniff.txt 2>/dev/null
+        echo "DONE:$(date +%s)" > /tmp/emsproxy_sniff_state
+        chmod 644 /tmp/emsproxy_sniff_state
+    ) &
+}
+
 logmsg "Watchdog gestartet"
 
 while true; do
@@ -139,6 +198,10 @@ while true; do
     # 0a) Geraeteslots pollen - VOR dem enabled-Check, damit der Poll
     #     auch bei gestopptem Proxy laeuft (z.B. Standort Hebauer)
     device_poll_tick
+
+    # 0b) Sniffer-Anforderung pruefen (laeuft ebenfalls unabhaengig
+    #     vom Proxy-Zustand - rein passives Mitlesen)
+    sniff_tick
 
     # 0) Start/Stop-Wunsch der Setup-UI umsetzen
     ENABLED=$(cat /etc/tesvolt_proxy_enabled 2>/dev/null)
