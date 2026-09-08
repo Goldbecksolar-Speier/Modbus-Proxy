@@ -227,6 +227,37 @@
   </table>
 </div>
 
+<!-- ================= NETZLEISTUNGS-TACHO ================= -->
+<div class="panel" id="gauge_panel" style="margin-top:24px;">
+  <h3>Netzleistung<span class="src-tag" id="gauge_src"></span></h3>
+  <div style="display:flex; align-items:flex-start; gap:24px; flex-wrap:wrap;">
+    <div>
+      <canvas id="gauge_canvas" width="340" height="205" style="cursor:pointer;"
+              title="Klicken: Messwert und Skala waehlen"></canvas>
+      <div id="gauge_value" style="text-align:center; font-size:22px; font-weight:bold;">-</div>
+      <div id="gauge_state" style="text-align:center; font-size:12px; color:#666;">
+        Tacho anklicken: Messwert und Skala waehlen</div>
+    </div>
+    <div id="gauge_cfgbox" style="display:none; border:1px solid #ccc; border-radius:6px;
+         padding:12px; font-size:13px; min-width:280px; background:#fafafa;">
+      <b>Tacho-Konfiguration</b>
+      <div style="margin-top:8px;">Messwert (aus Slot-Monitoring):<br>
+        <select id="gauge_sel" style="max-width:280px;"></select></div>
+      <div style="margin-top:8px;">Skala +/- <input id="gauge_max" size="5" value="200"> kW
+        &nbsp; Einheit des Messwerts:
+        <select id="gauge_unit"><option value="W">W</option><option value="kW">kW</option></select></div>
+      <div style="margin-top:8px;"><label><input type="checkbox" id="gauge_inv">
+        Vorzeichen umkehren (falls Einspeisung rechts erscheint)</label></div>
+      <div style="margin-top:10px;">
+        <button id="gauge_save">Uebernehmen</button>
+        <button id="gauge_cancel">Abbrechen</button>
+        <button id="gauge_clear" style="color:#c62828;">Tacho zuruecksetzen</button>
+      </div>
+      <div id="gauge_cfgmsg" style="margin-top:6px; color:#c62828;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ================= VERLAUFSKURVEN: 24 h in 5-min-Schritten ================= -->
 <div class="panel hist-panel">
   <h3>Verlauf (24 h, 5-min-Raster)<span class="src-tag" id="hist_src"></span> <span style="font-weight:normal;font-size:12px;color:#666;">&mdash; Historie wird im Browser gesammelt (localStorage)</span></h3>
@@ -367,6 +398,7 @@ var slotmon_hist = {};
 try { slotmon_hist = JSON.parse(localStorage.getItem(SLOTMON_HIST_KEY)) || {}; } catch (e) { slotmon_hist = {}; }
 var slotmon_labels = {};   // smId -> Anzeigename (bei jedem Refresh aktualisiert)
 var slotmon_now = {};      // "sm_<smId>" -> letzter Messwert (fuer hist-now)
+var slotmon_vals = {};     // smId -> { v: Rohwert, stale: bool } (ALLE mon-Werte, fuer Tacho)
 // Aktive smIds (Slot insetup=1 UND Key in mon-Liste) - fuer Verwaisten-Erkennung:
 // Kurve ohne aktiven smId (Geraet/Wert im Setup entfernt) wird ROT markiert
 // und per Klick geloescht. Erst gueltig, wenn alle cfg-Reads fehlerfrei waren.
@@ -470,6 +502,7 @@ function slotmonRefresh() {
     }
     histSave();
     renderSlotmonHistoryAll();
+    gaugeRender();
   }
   for (var n = 1; n <= SLOTMON_NSLOTS; n++) {
     (function (n) {
@@ -501,6 +534,7 @@ function slotmonRefresh() {
                   var cls = (v === undefined) ? "hm-stale" : (stale ? "hm-warn" : "hm-ok");
                   var smId = n + ":" + k;
                   slotmon_labels[smId] = label + " " + k;
+                  slotmon_vals[smId] = { v: v, stale: stale };
                   // Angehakte Werte in die Browser-Historie uebernehmen
                   if (slotmon_hist[smId] && v !== undefined) {
                     var num = parseFloat(v);
@@ -529,6 +563,154 @@ function slotmonRefresh() {
         .catch(function () { cfgFail = true; done(); });
     })(n);
   }
+}
+
+// ---------------- Netzleistungs-Tacho ----------------
+// Halbkreis-Tacho: LINKS = Einspeisung (negativ), RECHTS = Bezug (positiv).
+// Datenquelle: ein Wert aus dem Slot-Monitoring (slotmon_vals, kein extra
+// Modbus-Verkehr). Konfiguration per Klick aufs Tacho, gespeichert im
+// Browser (localStorage ems_gauge_v1: key, max kW, Einheit W/kW, invert).
+var GAUGE_KEY = "ems_gauge_v1";
+var gauge_cfg = null;
+try { gauge_cfg = JSON.parse(localStorage.getItem(GAUGE_KEY)); } catch (e) { gauge_cfg = null; }
+if (gauge_cfg && !gauge_cfg.key) gauge_cfg = null;
+
+function gaugeKw() {
+  // aktueller Messwert in kW (Vorzeichen: + = Bezug) oder null
+  if (!gauge_cfg) return null;
+  var e = slotmon_vals[gauge_cfg.key];
+  if (!e || e.v === undefined) return null;
+  var num = parseFloat(e.v);
+  if (isNaN(num)) return null;
+  if (gauge_cfg.unit === "W") num = num / 1000;
+  if (gauge_cfg.inv) num = -num;
+  return { kw: num, stale: e.stale };
+}
+
+function gaugeRender() {
+  var cv = document.getElementById("gauge_canvas");
+  if (!cv || !cv.getContext) return;
+  var ctx = cv.getContext("2d");
+  var W = cv.width, H = cv.height;
+  var cx = W / 2, cy = H - 25, R = 130;
+  var max = (gauge_cfg && gauge_cfg.max > 0) ? gauge_cfg.max : 200;
+  var m = gaugeKw();
+  ctx.clearRect(0, 0, W, H);
+
+  // Farbzonen: links gruen (Einspeisung), rechts orange (Bezug)
+  ctx.lineWidth = 16;
+  ctx.strokeStyle = "#3a9e4d";
+  ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 1.5 * Math.PI); ctx.stroke();
+  ctx.strokeStyle = "#e08a00";
+  ctx.beginPath(); ctx.arc(cx, cy, R, 1.5 * Math.PI, 2 * Math.PI); ctx.stroke();
+
+  // Skalenstriche + Beschriftung: -max .. 0 .. +max
+  ctx.fillStyle = "#333"; ctx.strokeStyle = "#333"; ctx.lineWidth = 2;
+  ctx.font = "11px Arial"; ctx.textAlign = "center";
+  [-1, -0.5, 0, 0.5, 1].forEach(function (f) {
+    var a = Math.PI + (f + 1) / 2 * Math.PI;
+    var x1 = cx + Math.cos(a) * (R - 12), y1 = cy + Math.sin(a) * (R - 12);
+    var x2 = cx + Math.cos(a) * (R + 12), y2 = cy + Math.sin(a) * (R + 12);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    var lx = cx + Math.cos(a) * (R + 24), ly = cy + Math.sin(a) * (R + 24) + 4;
+    var t = (f === 0) ? "0" : ((f > 0 ? "+" : "-") + Math.round(Math.abs(f) * max));
+    ctx.fillText(t, lx, ly);
+  });
+  ctx.font = "bold 12px Arial";
+  ctx.fillStyle = "#3a9e4d"; ctx.fillText("Einspeisung", cx - R + 20, cy - 18);
+  ctx.fillStyle = "#e08a00"; ctx.fillText("Bezug", cx + R - 25, cy - 18);
+
+  // Zeiger
+  var frac = 0, col = "#999";
+  if (m !== null) {
+    frac = Math.max(-1, Math.min(1, m.kw / max));
+    col = m.stale ? "#e0a800" : "#1a3e6e";
+  }
+  var na = Math.PI + (frac + 1) / 2 * Math.PI;
+  ctx.strokeStyle = col; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(na) * (R - 24), cy + Math.sin(na) * (R - 24)); ctx.stroke();
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(cx, cy, 7, 0, 2 * Math.PI); ctx.fill();
+
+  // Wert + Statuszeile
+  var valEl = document.getElementById("gauge_value");
+  var stEl = document.getElementById("gauge_state");
+  var srcEl = document.getElementById("gauge_src");
+  if (!gauge_cfg) {
+    valEl.innerText = "-";
+    stEl.innerText = "Tacho anklicken: Messwert und Skala waehlen";
+    srcEl.innerText = "";
+  } else {
+    var lbl = slotmon_labels[gauge_cfg.key] || gauge_cfg.key;
+    srcEl.innerText = " " + lbl;
+    if (m === null) {
+      valEl.innerText = "-";
+      stEl.innerText = "kein Messwert (Slot-Monitoring pruefen: " + gauge_cfg.key + ")";
+    } else {
+      valEl.innerText = m.kw.toFixed(1) + " kW " + (m.kw < 0 ? "Einspeisung" : (m.kw > 0 ? "Bezug" : ""));
+      valEl.style.color = m.kw < 0 ? "#3a9e4d" : "#e08a00";
+      stEl.innerText = (m.stale ? "WERT VERALTET (> 5 min) - " : "") +
+        "Skala +/-" + max + " kW - anklicken zum Aendern";
+    }
+  }
+}
+
+function gaugeCfgOpen() {
+  var box = document.getElementById("gauge_cfgbox");
+  if (box.style.display !== "none") { box.style.display = "none"; return; }
+  var sel = document.getElementById("gauge_sel");
+  sel.innerHTML = "";
+  var keys = Object.keys(slotmon_labels).sort();
+  if (keys.length === 0) {
+    document.getElementById("gauge_cfgmsg").innerText =
+      "Keine Werte im Slot-Monitoring - erst Geraet in Setup uebernehmen und Werte anhaken.";
+  } else {
+    document.getElementById("gauge_cfgmsg").innerText = "";
+  }
+  keys.forEach(function (k) {
+    var o = document.createElement("option");
+    o.value = k; o.text = slotmon_labels[k] + " [" + k + "]";
+    sel.appendChild(o);
+  });
+  if (gauge_cfg) {
+    sel.value = gauge_cfg.key;
+    document.getElementById("gauge_max").value = gauge_cfg.max;
+    document.getElementById("gauge_unit").value = gauge_cfg.unit || "W";
+    document.getElementById("gauge_inv").checked = !!gauge_cfg.inv;
+  }
+  box.style.display = "";
+}
+
+function gaugeInit() {
+  document.getElementById("gauge_canvas").addEventListener("click", gaugeCfgOpen);
+  document.getElementById("gauge_cancel").addEventListener("click", function () {
+    document.getElementById("gauge_cfgbox").style.display = "none";
+  });
+  document.getElementById("gauge_clear").addEventListener("click", function () {
+    gauge_cfg = null;
+    try { localStorage.removeItem(GAUGE_KEY); } catch (e) {}
+    document.getElementById("gauge_cfgbox").style.display = "none";
+    gaugeRender();
+  });
+  document.getElementById("gauge_save").addEventListener("click", function () {
+    var key = document.getElementById("gauge_sel").value;
+    var max = parseFloat(document.getElementById("gauge_max").value);
+    var msg = document.getElementById("gauge_cfgmsg");
+    if (!key) { msg.innerText = "Bitte einen Messwert waehlen."; return; }
+    if (isNaN(max) || max <= 0 || max > 100000) { msg.innerText = "Skala: Zahl > 0 eingeben (kW)."; return; }
+    gauge_cfg = {
+      key: key,
+      max: max,
+      unit: document.getElementById("gauge_unit").value,
+      inv: document.getElementById("gauge_inv").checked
+    };
+    try { localStorage.setItem(GAUGE_KEY, JSON.stringify(gauge_cfg)); } catch (e) {}
+    msg.innerText = "";
+    document.getElementById("gauge_cfgbox").style.display = "none";
+    gaugeRender();
+  });
+  gaugeRender();
 }
 
 // ---------------- Direktlesung EMS-Quelle (generisch fuer DM + Tesvolt) ----------------
@@ -1097,6 +1279,7 @@ buildHistory();
 buildSlotmonHistory();
 renderHistoryAll();
 renderSlotmonHistoryAll();
+gaugeInit();
 refresh();
 setInterval(refresh, 10000);
 window.addEventListener("resize", function () { renderHistoryAll(); renderSlotmonHistoryAll(); });
