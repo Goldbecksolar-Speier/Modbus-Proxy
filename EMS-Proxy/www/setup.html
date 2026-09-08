@@ -177,7 +177,9 @@ function monSave(n) {
   for (var i = 0; i < boxes.length; i++) {
     if (boxes[i].checked) keys.push(boxes[i].getAttribute("data-key"));
   }
-  fetch("/cgi-bin/set_dev.cgi?slot=" + n + "&mon=" + encodeURIComponent(keys.join(",")))
+  // Kommas NICHT URL-kodieren: %2C wuerde vom CGI-Whitelist-Filter zu "2C"
+  // zwischen den Keys verstuemmelt (Keys selbst sind A-Za-z0-9_ und safe)
+  fetch("/cgi-bin/set_dev.cgi?slot=" + n + "&mon=" + keys.join(","))
     .then(function (r) { return r.text(); })
     .then(function (t) {
       var m = document.getElementById("monmsg" + n);
