@@ -96,7 +96,7 @@ function buildSlots() {
       "<div class='slot' id='slot" + n + "'>" +
       "<h3>Slot " + n + "<span class='badge b-off' id='badge" + n + "'>-</span></h3>" +
       "<div class='cfg-row'>Profil: <select id='psel" + n + "'>" + opts + "</select> " +
-      "oder frei: <input type='text' id='pfree" + n + "' placeholder='profilname'> " +
+      "oder frei: <input type='text' id='pfree" + n + "' placeholder='profilname = .lua-Datei!'> " +
       "IP: <input type='text' id='ip" + n + "'> " +
       "Port: <input type='text' class='num' id='port" + n + "' placeholder='502'> " +
       "Unit: <input type='text' class='num' id='unit" + n + "' placeholder='1'> " +
@@ -126,6 +126,15 @@ function buildSlots() {
       el("cnolim" + n).addEventListener("click", function () { sendCtl(n, "nolimit"); });
       el("clim704" + n).addEventListener("click", function () { sendLimit(n, true); });
       el("cnolim704" + n).addEventListener("click", function () { sendCtl(n, "nolimit704"); });
+      // UX-Fix: Freitext gewinnt beim Speichern ueber das Dropdown.
+      // Damit das nie stillschweigend passiert: Dropdown-Wechsel leert das
+      // Freitextfeld, Tippen im Freitextfeld setzt das Dropdown auf (leer).
+      el("psel" + n).addEventListener("change", function () {
+        el("pfree" + n).value = "";
+      });
+      el("pfree" + n).addEventListener("input", function () {
+        if (el("pfree" + n).value.trim() !== "") el("psel" + n).value = "";
+      });
     })(m);
   }
 }
@@ -250,7 +259,7 @@ function saveSlot(n) {
     .then(function (t) {
       var m = el("msg" + n);
       if (t.indexOf("OK") === 0) {
-        m.innerText = "Gespeichert - Poll angefordert.";
+        m.innerText = "Gespeichert (Profil: " + (profile || "(leer)") + ") - Poll angefordert.";
         m.style.color = "#080";
         el("ctl" + n).style.display = CONTROL_PROFILES[profile] ? "" : "none";
       } else {
