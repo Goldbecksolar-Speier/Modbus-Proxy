@@ -53,6 +53,10 @@
   .btn-on:disabled, .btn-off:disabled, .btn-lim:disabled, .btn-lim2:disabled { background: #aaa; cursor: default; }
   input.pct { width: 50px; text-align: right; }
   input.sec { width: 55px; text-align: right; }
+  .btn-setup { border: 0; border-radius: 5px; padding: 6px 14px; font-weight: bold; }
+  .btn-setup.s-off { background: #ccc; color: #666; cursor: default; }
+  .btn-setup.s-ready { background: #1a7a2e; color: #fff; cursor: pointer; }
+  .btn-setup.s-in { background: #2e6ed1; color: #fff; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -102,6 +106,8 @@ function el(id) { return document.getElementById(id); }
 // je Slot: gewaehltes Tag-Profil + zuletzt gespeicherter Zustand (dirty-Tracking)
 var selProf = {};
 var savedCfg = {};
+var inSetup = {};   // Slot n: "1" wenn Geraet ins Setup uebernommen
+var pollOk = {};    // Slot n: true sobald points_ok > 0 (Pipeline-Freigabe)
 
 function effProfile(n) {
   return selProf[n] || "";
@@ -218,6 +224,8 @@ function buildSlots() {
       "Unit: <input type='text' class='num' id='unit" + n + "' placeholder='1'> " +
       "<label><input type='checkbox' id='en" + n + "'> aktiv</label> " +
       "<button id='save" + n + "' class='btn-save clean' disabled>Profil geladen</button> " +
+      "<button id='setup" + n + "' class='btn-setup s-off' disabled " +
+      "title='Erfolgreich gepolltes Geraet als Monitoring-Auswahl in setup.html uebernehmen'>-&gt; Setup</button> " +
       "<span id='msg" + n + "'></span></div>" +
       "<div class='cfg-row ctl' id='ctl" + n + "' style='display:none'>" +
       "Wechselrichter-Einspeisung: " +
@@ -239,6 +247,7 @@ function buildSlots() {
       selProf[n] = "";
       renderTags(n);
       el("save" + n).addEventListener("click", function () { saveSlot(n); });
+      el("setup" + n).addEventListener("click", function () { toggleSetup(n); });
       el("con" + n).addEventListener("click", function () { sendCtl(n, "on"); });
       el("coff" + n).addEventListener("click", function () { sendCtl(n, "off"); });
       el("clim" + n).addEventListener("click", function () { sendLimit(n, false); });
@@ -357,6 +366,7 @@ function loadCfg(n) {
         if (k === "port") el("port" + n).value = v;
         if (k === "unit") el("unit" + n).value = v;
         if (k === "en")   el("en" + n).checked = (v !== "0");
+        if (k === "insetup") { inSetup[n] = v; updateSetupBtn(n); }
       });
       // gespeicherten Zustand merken -> Button wird grau (Profil geladen)
       savedCfg[n] = currentCfg(n);
@@ -468,6 +478,55 @@ function regFor(profile, key) {
   return (m && m[key]) ? m[key] : "";
 }
 
+// ---------------------------------------------------------------------
+// Pipeline Slots -> Setup -> Status:
+// Button grau  = noch kein erfolgreicher Poll (points_ok = 0)
+// Button gruen = Poll OK, Klick uebernimmt Geraet ins Setup (insetup=1)
+// Button blau  = bereits im Setup, Klick entfernt es wieder (insetup=0)
+// ---------------------------------------------------------------------
+function updateSetupBtn(n) {
+  var b = el("setup" + n);
+  if (!b) return;
+  if (inSetup[n] === "1") {
+    b.className = "btn-setup s-in";
+    b.disabled = false;
+    b.innerText = "Im Setup";
+  } else if (pollOk[n]) {
+    b.className = "btn-setup s-ready";
+    b.disabled = false;
+    b.innerText = "-> Setup";
+  } else {
+    b.className = "btn-setup s-off";
+    b.disabled = true;
+    b.innerText = "-> Setup";
+  }
+}
+
+function toggleSetup(n) {
+  var v = (inSetup[n] === "1") ? "0" : "1";
+  if (v === "0" && !confirm("Slot " + n + " aus dem Setup-Monitoring entfernen?")) return;
+  fetch("/cgi-bin/set_dev.cgi?slot=" + n + "&insetup=" + v)
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var m = el("msg" + n);
+      if (t.indexOf("OK") === 0) {
+        inSetup[n] = v;
+        updateSetupBtn(n);
+        m.innerText = (v === "1")
+          ? "Ins Setup uebernommen - Werte in setup.html auswaehlen."
+          : "Aus dem Setup entfernt.";
+        m.style.color = (v === "1") ? "#080" : "#555";
+      } else {
+        m.innerText = t.trim();
+        m.style.color = "#c00";
+      }
+    })
+    .catch(function () {
+      el("msg" + n).innerText = "HTTP-Fehler!";
+      el("msg" + n).style.color = "#c00";
+    });
+}
+
 function setBadge(n, cls, txt) {
   var b = el("badge" + n);
   b.className = "badge " + cls;
@@ -482,6 +541,8 @@ function loadStatus(n) {
       var tbody = el("tbl" + n).getElementsByTagName("tbody")[0];
       if (t === "NOSTATUS" || t === "") {
         setBadge(n, "b-off", "kein Status");
+        pollOk[n] = false;
+        updateSetupBtn(n);
         tbody.innerHTML = "<tr class='meta'><td colspan='3'>Noch kein Poll-Ergebnis (Slot leer oder Watchdog-Poll steht aus).</td></tr>";
         return;
       }
@@ -505,6 +566,9 @@ function loadStatus(n) {
       else if (errc > 0)           setBadge(n, "b-err", errc + " Fehler");
       else if (okc > 0)            setBadge(n, "b-ok", okc + " OK");
       else                          setBadge(n, "b-off", "-");
+
+      pollOk[n] = (okc > 0 && kv.enabled !== "0");
+      updateSetupBtn(n);
 
       var prof = kv.profile || "";
       var rows = "";
