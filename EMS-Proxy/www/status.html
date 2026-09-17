@@ -212,6 +212,14 @@
       <div class="bar-wrap"><div id="soc_t_fill" class="bar-fill" style="background:#2e7dd1;"></div></div>
       <div class="bar-label">BLUESUN:</div>
       <div class="bar-wrap"><div id="soc_b_fill" class="bar-fill" style="background:#3a9e4d;"></div></div>
+      <div class="bar-label" id="soc3_label" style="cursor:pointer;text-decoration:underline dotted;" title="Klicken zum Auswaehlen">Hybrid-WR (auswaehlen):</div>
+      <div class="bar-wrap"><div id="soc3_fill" class="bar-fill" style="background:#8e44ad;"></div></div>
+      <div id="soc3_cfgbox" style="display:none;border:1px solid #ccc;border-radius:6px;padding:8px;margin-top:-4px;margin-bottom:10px;background:#fafafa;">
+        Quelle: <select id="soc3_sel" style="max-width:220px;"></select>
+        <button id="soc3_save" style="margin-left:6px;">Uebernehmen</button>
+        <button id="soc3_cancel">Abbrechen</button>
+        <button id="soc3_clear" style="color:#c62828;">Zuruecksetzen</button>
+      </div>
     </div>
   </div>
 
@@ -769,6 +777,7 @@ function gaugeRender(d) {
 
 function gaugeRenderAll() {
   GAUGE_DEFS.forEach(function (d) { gaugeRender(d); });
+  soc3Render();
 }
 
 // Einzelspeicher-Tachos nur im Split Mode anzeigen
@@ -1510,12 +1519,105 @@ document.querySelector("#slotmon_table tbody").addEventListener("change", functi
   renderSlotmonHistoryAll();
 });
 
+// ---------------- Dritte SOC-Anzeige: frei waehlbarer Hybrid-WR-Kanal ----------------
+// Gleiches Kanalsystem wie die Tachos (Slot-Monitoring/EMS-Register/Direktlesung),
+// als Prozent-Balken statt Tacho - fuer den SOC des am jeweiligen Standort
+// konfigurierten Hybrid-Wechselrichters (Solis bei Hebauer, SMA bei Brand, ...).
+var soc3_cfg = null;
+try { soc3_cfg = JSON.parse(localStorage.getItem("ems_soc3_v1")); } catch (e) { soc3_cfg = null; }
+
+function soc3Value() {
+  if (!soc3_cfg || !soc3_cfg.key) return null;
+  var key = soc3_cfg.key;
+  if (key.indexOf("ems:") === 0) {
+    var stE = state[parseInt(key.substring(4), 10)];
+    return (stE && stE.num !== null) ? stE.num : null;
+  }
+  if (key.indexOf("dm:") === 0 || key.indexOf("tv:") === 0) {
+    var sv = src_vals[key];
+    return (sv && sv.v !== null && sv.v !== undefined) ? sv.v : null;
+  }
+  var e = slotmon_vals[key];
+  if (!e || e.v === undefined) return null;
+  var num = parseFloat(e.v);
+  return isNaN(num) ? null : num;
+}
+
+function soc3Render() {
+  var lbl = document.getElementById("soc3_label");
+  if (!lbl) return; // Panel evtl. noch nicht gebaut
+  if (!soc3_cfg || !soc3_cfg.key) {
+    lbl.innerText = "Hybrid-WR (auswaehlen):";
+    updateSocBar("soc3_fill", null, 0);
+    return;
+  }
+  lbl.innerText = gaugeSrcLabel(soc3_cfg.key) + ":";
+  var v = soc3Value();
+  updateSocBar("soc3_fill", null, (v === null) ? 0 : Math.round(v));
+}
+
+function soc3CfgOpen() {
+  var box = document.getElementById("soc3_cfgbox");
+  if (box.style.display !== "none") { box.style.display = "none"; return; }
+  var sel = document.getElementById("soc3_sel");
+  sel.innerHTML = "";
+  var addGroup = function (label, items) {
+    if (items.length === 0) return;
+    var og = document.createElement("optgroup");
+    og.label = label;
+    items.forEach(function (it) {
+      var o = document.createElement("option");
+      o.value = it.k; o.text = it.t;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  };
+  addGroup("Slot-Monitoring", Object.keys(slotmon_labels).sort().map(function (k) {
+    return { k: k, t: slotmon_labels[k] + " [" + k + "]" };
+  }));
+  addGroup("EMS-Proxy-Register (Port 1502)", EMS_MAP.map(function (e) {
+    return { k: "ems:" + e.reg, t: e.name + " (" + e.reg + (e.unit ? ", " + e.unit : "") + ")" };
+  }));
+  if (dm_cfg.source === "datamanager") {
+    addGroup("EMS-Direktlesung SMA DM", DM_MAP.map(function (e) {
+      return { k: "dm:" + e.addr, t: e.name + " (" + e.addr + ")" };
+    }));
+  }
+  if (dm_cfg.source === "tesvolt") {
+    addGroup("EMS-Direktlesung Tesvolt", TV_MAP.map(function (e) {
+      return { k: "tv:" + e.addr, t: e.name + " (" + e.addr + ")" };
+    }));
+  }
+  if (soc3_cfg) sel.value = soc3_cfg.key;
+  box.style.display = "";
+}
+
+document.getElementById("soc3_label").addEventListener("click", soc3CfgOpen);
+document.getElementById("soc3_cancel").addEventListener("click", function () {
+  document.getElementById("soc3_cfgbox").style.display = "none";
+});
+document.getElementById("soc3_clear").addEventListener("click", function () {
+  soc3_cfg = null;
+  try { localStorage.removeItem("ems_soc3_v1"); } catch (e) {}
+  document.getElementById("soc3_cfgbox").style.display = "none";
+  soc3Render();
+});
+document.getElementById("soc3_save").addEventListener("click", function () {
+  var key = document.getElementById("soc3_sel").value;
+  if (!key) return;
+  soc3_cfg = { key: key };
+  try { localStorage.setItem("ems_soc3_v1", JSON.stringify(soc3_cfg)); } catch (e) {}
+  document.getElementById("soc3_cfgbox").style.display = "none";
+  soc3Render();
+});
+
 buildTable();
 buildHistory();
 buildSlotmonHistory();
 renderHistoryAll();
 renderSlotmonHistoryAll();
 gaugeInit();
+soc3Render();
 refresh();
 setInterval(refresh, 10000);
 window.addEventListener("resize", function () { renderHistoryAll(); renderSlotmonHistoryAll(); });
