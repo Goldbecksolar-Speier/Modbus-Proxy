@@ -82,7 +82,11 @@ Big-Endian (high word first); >= 300 ms zwischen Lese-Frames,
 | 33149-33150 | Battery 1 Real-time Power | S32 | 1 W | Betrag; Richtung aus 33135 |
 | 33151-33152 | AC Grid Port Total Active Power | S32 | 1 W | + = aus WR raus |
 | 33263-33264 | Meter Total Active Power | S32 | 1 W | + = Einspeisung, - = Netzbezug |
-| 33147 | Grid-side Home Load Power | U16 | 1 W | > 65 kW: mit 34343 zu U32 |
+| 33147 | Grid-side Home Load Power | U16 | 1 W | > 65 kW: mit 34343 zu U32; **explizit ohne Backup-Load** |
+| 33148 | Backup Load Power | S16 | 1 W | + = aus Backup-Port raus, - = rein; > 20 kW: mit 34344 zu S32 (bislang ungenutzt) |
+| 33137/33138 | Backup Port AC Spannung/Strom Phase A | U16 | 0,1V / 0,1A | |
+| 33153/33154 | Backup Port AC Spannung/Strom Phase B | U16 | 0,1V / 0,1A | |
+| 33155/33156 | Backup Port AC Spannung/Strom Phase C | U16 | 0,1V / 0,1A | |
 
 Hinweis Mehrgeraete-Summen (falls spaeter mehrere Solis parallel):
 34905-34906 Hybrid inverters' Total Battery Power (S32, 1 W,
@@ -93,8 +97,10 @@ Hinweis Mehrgeraete-Summen (falls spaeter mehrere Solis parallel):
 1. ~~Datalogger-Typ / TCP-Durchleitung~~ ERLEDIGT 2026-09-06:
    S2-WL-ST unterstuetzt Modbus TCP nativ (Port 502). Noch offen:
    statische IP vergeben und Verbindung am Geraet testen.
-2. Register-Offset testen: SOC auf 33139 oder 33138 (Solis-Guide
-   adressiert ab 0)? Mit test.html (read-only) klaeren.
+2. ~~Register-Offset testen: SOC auf 33139 oder 33138?~~ ERLEDIGT 2026-09-17:
+   anhand Solis RS485_MODBUS(ESINV-33000ID) Hybrid Inverter Ver3.5 (S.12)
+   geklaert - 33139 = Battery 1 SOC (korrekt, kein Offset), 33138 = Backup
+   Port AC Current A (anderes Register).
 3. Solis Slave-Adresse (Default 1?) und Erreichbarkeit ueber den
    Datalogger testen.
 4. Kaco NX3: ~~SunSpec-Unterstuetzung klaeren~~ ERLEDIGT 2026-09-06

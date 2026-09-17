@@ -9,8 +9,10 @@
 --  * Modbus-TCP-Server auf Port 502 (Default)
 --  * Direktanschluss-Default-IP: 10.10.100.254 (im LAN per DHCP,
 --    statische IP ueber SolisCloud-App "LAN Settings" empfohlen)
---  * Register-Adressierung im Guide beginnt bei 0 -> ggf. Offset -1
---    gegenueber der Protokollliste testen (33139 vs. 33138)!
+--  * Register-Adressierung im Guide beginnt bei 0. Offset-Frage geklaert
+--    (Solis RS485_MODBUS(ESINV-33000ID) Hybrid Inverter Ver3.5, S.12):
+--    33139 = Battery 1 SOC (wie im Code), 33138 = Backup Port AC Current A
+--    (anderes Register, kein Offset-Fehler). Kein Offset noetig.
 -- Timing lt. Protokoll: >= 300 ms zwischen Lese-Frames,
 -- max. 50 Register pro Frame (RTU-Seite 9600 8N1).
 --
@@ -19,6 +21,9 @@
 --    (0 = Laden, 1 = Entladen). Proxy-Konvention (>0 = Entladen)
 --    wird per bat_dir_reg hergestellt.
 --  * AC-Grid-Port 33151/52: + = Leistung fliesst aus dem WR raus.
+--  * Backup-Port 33148: + = Leistung fliesst aus dem Backup-Port raus,
+--    - = rein. Eigener Leistungspfad, NICHT in 33147 (Grid Load)
+--    enthalten (lt. Solis-Doku explizit "excluding Backup load").
 --  * Meter 33263/64: + = Einspeisung ins Netz, - = Netzbezug.
 --
 -- BLOCK-READ (Learning 2026-09-08, Sniffer-Capture): Einzelreads
@@ -44,7 +49,7 @@ return {
   -- fallen automatisch auf Einzelreads zurueck. count <= max_regs!
   read_blocks = {
     { fc = 4, addr = 33057, count = 39 },  -- 33057..33095: pv_power, fault, ac_power, grid_freq, status
-    { fc = 4, addr = 33133, count = 20 },  -- 33133..33152: Batterie (U/I/dir/SOC/SOH/P), house_load, grid_port_p
+    { fc = 4, addr = 33133, count = 20 },  -- 33133..33152: Batterie (U/I/dir/SOC/SOH/P), house_load, backup_power, grid_port_p
     { fc = 4, addr = 33263, count = 2  },  -- 33263..33264: meter_power
   },
 
@@ -64,6 +69,7 @@ return {
     grid_port_p  = { addr = 33151, fc = 4, type = "s32be", scale = 1,    unit = "W"  },  -- + aus WR raus
     meter_power  = { addr = 33263, fc = 4, type = "s32be", scale = 1,    unit = "W"  },  -- + Einspeisung, - Bezug
     house_load   = { addr = 33147, fc = 4, type = "u16",   scale = 1,    unit = "W"  },  -- netzseitige Last (>65kW: +34343)
+    backup_power = { addr = 33148, fc = 4, type = "s16",   scale = 1,    unit = "W"  },  -- Backup-Port-Leistung, getrennt vom Grid Load (33147); + = raus, - = rein; >20kW-Modelle lt. Solis-Doku: +34344 fuer S32 (hier NICHT implementiert - S16 laeuft bei Werten >32767 W ueber; vor produktivem Einsatz am Backup-Port pruefen, ob 34344-Kombination noetig ist)
   },
 
   ui = {
