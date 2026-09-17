@@ -200,8 +200,18 @@ if ! command -v tcpdump >/dev/null 2>&1; then
 fi
 
 # --- 7. Dienste ----------------------------------------------------------------
+# WICHTIG: "restart" MUSS synchron laufen (kein "&" am Ende der Zeile!).
+# Fehler zuvor: "restart || DAEMON &" haengt das "&" an die GANZE A||B-Kette
+# (= "( restart || fallback ) &"), nicht nur an den Fallback - der Restart
+# lief dadurch im Hintergrund, das Skript wartete nicht auf sein "stop;
+# sleep 1; start". Bei den dokumentationsgemaess ZWEI Aufrufen des Update-
+# Skripts hintereinander ueberschnitten sich zwei solcher Hintergrund-
+# Restarts zeitlich -> doppelte/dreifache ems_watchdog.sh-Prozesse
+# (Learning 2026-09-17, vom Nutzer live beobachtet und bereinigt).
+# Fix: nur der Fallback wird (falls ueberhaupt gebraucht) im Hintergrund
+# gestartet, der Normalfall "restart" laeuft synchron zu Ende.
 /etc/init.d/ems_watchdog enable  2>/dev/null
-/etc/init.d/ems_watchdog restart 2>/dev/null || "$BIN/ems_watchdog.sh" &
+/etc/init.d/ems_watchdog restart 2>/dev/null || ( "$BIN/ems_watchdog.sh" & )
 
 # Laufenden Proxy-Prozess beenden: Lua laedt Code nur beim Start - ein
 # bereits laufender Proxy arbeitet sonst mit dem ALTEN Code weiter.
