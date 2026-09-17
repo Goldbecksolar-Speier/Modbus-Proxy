@@ -541,10 +541,13 @@ function slotmonRefresh() {
 
 // ---------------- Tachos (Netz, Speicher gesamt, Einzelspeicher) ----------------
 // Generische Halbkreis-Tachos: LINKS = negativer Wert, RECHTS = positiver Wert.
-// g1/g2: Wert aus Slot-Monitoring (slotmon_vals), EMS-Proxy-Registern
+// g1/g2/g5: Wert aus Slot-Monitoring (slotmon_vals), EMS-Proxy-Registern
 //        (state, Schluessel "ems:<reg>") oder EMS-Direktlesung (src_vals,
 //        Schluessel "dm:<addr>"/"tv:<addr>"), per Klick konfigurierbar
 //        (Messwert, Skala, Einheit, Invert; localStorage pro Tacho).
+//        g5 ist bewusst frei (kein fester Anwendungsfall wie g1/g2) -
+//        Standardanwendung: Solis backup_power (Register 33148), aber
+//        jeder Slot-Monitoring-/EMS-/Direktlese-Kanal waehlbar.
 // g3/g4: Einzelspeicher Tesvolt/BLUESUN - FEST aus den Proxy-Registern
 //        30005/30015 (signed W), nur im Split Mode sichtbar; per Klick nur
 //        Skala/Invert einstellbar. Kleinere Darstellung.
@@ -562,7 +565,9 @@ var GAUGE_DEFS = [
     neg: "Laden", pos: "Entladen", markers: true },
   { id: "g4", title: "BLUESUN", store: "ems_gauge_b_v1", small: true,
     fixedReg: 30015, splitOnly: true, capShare: "b",
-    neg: "Laden", pos: "Entladen", markers: true }
+    neg: "Laden", pos: "Entladen", markers: true },
+  { id: "g5", title: "Backup-Leistung", store: "ems_gauge_free1_v1",
+    neg: "Ruecklauf", pos: "Versorgung", markers: false }
 ];
 var gauge_cfgs = {};   // id -> cfg oder null
 // Direktlese-Werte der EMS-Quelle (dm_table/tv_table) fuer die Tachos:
