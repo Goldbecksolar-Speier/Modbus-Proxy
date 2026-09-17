@@ -22,5 +22,7 @@ case "$NAME" in
     grid_max_chg) cat /etc/tesvolt_grid_max_chg 2>/dev/null || echo "" ;;
     grid_max_dis) cat /etc/tesvolt_grid_max_dis 2>/dev/null || echo "" ;;
     grid_use_ems) cat /etc/tesvolt_grid_use_ems 2>/dev/null || echo 0 ;;
+    griddraw_en)  cat /etc/tesvolt_griddraw_en 2>/dev/null || echo 0 ;;
+    griddraw_kw)  cat /etc/tesvolt_griddraw_kw 2>/dev/null || echo "" ;;
     *)            echo "ERROR:unknown param" ;;
 esac

@@ -109,6 +109,17 @@
 </div>
 
 <div>
+  <h3>Solis Netzbezug-Begrenzung</h3>
+  <label><input type="checkbox" id="griddraw_en"> Aktiv</label>
+  Limit (kW): <input id="griddraw_kw" type="number" min="0" step="0.1" style="width:80px"><br>
+  <small>Schreibt periodisch (alle ~60 s) in den Solis "Remote Dispatch Mode" (Register 44100-44103,
+  Ziel-IP = obige "Solis EMS IP") - begrenzt den maximalen Netzbezug, damit z.B. der Backup-Port
+  aus der Batterie statt aus dem Netz versorgt wird. Das Geraet hat einen eigenen Failsafe-Timer
+  (5 Min): faellt der Watchdog aus, kehrt der Solis von selbst in den Normalbetrieb zurueck.
+  Beim Deaktivieren wird die Begrenzung sofort explizit aufgehoben.</small>
+</div>
+
+<div>
   <button id="save_btn">Speichern</button>
   <span id="save_status"></span>
 </div>
@@ -287,7 +298,8 @@ function loadConfig() {
   ["cap_t", "cap_b", "split_mode", "ip_t", "ip_b", "sim",
    "ip_dm", "ip_sma", "ip_ems_t", "ip_ems_s", "ems_source", "unit_dm",
    "en_t", "en_b", "en_sma",
-   "grid_max_chg", "grid_max_dis", "grid_use_ems"].forEach(function (name) {
+   "grid_max_chg", "grid_max_dis", "grid_use_ems",
+   "griddraw_en", "griddraw_kw"].forEach(function (name) {
     fetch("/cgi-bin/get_param.cgi?name=" + name)
       .then(function (r) { return r.text(); })
       .then(function (v) {
@@ -311,6 +323,8 @@ function loadConfig() {
         if (name === "grid_max_chg") { document.getElementById("grid_chg").value = v; updateGridHint(); }
         if (name === "grid_max_dis") { document.getElementById("grid_dis").value = v; updateGridHint(); }
         if (name === "grid_use_ems") document.getElementById("grid_use_ems").checked = (v === "1");
+        if (name === "griddraw_en") document.getElementById("griddraw_en").checked = (v === "1");
+        if (name === "griddraw_kw") document.getElementById("griddraw_kw").value = v;
       })
       .catch(function () {});
   });
@@ -336,6 +350,8 @@ function saveConfig() {
   var gChg  = document.getElementById("grid_chg").value;
   var gDis  = document.getElementById("grid_dis").value;
   var gEms  = document.getElementById("grid_use_ems").checked ? "1" : "0";
+  var gdEn  = document.getElementById("griddraw_en").checked ? "1" : "0";
+  var gdKw  = document.getElementById("griddraw_kw").value;
 
   Promise.all([
     fetch("/cgi-bin/set_mode.cgi?mode=" + mode).then(function (r) { return r.text(); }),
@@ -346,7 +362,8 @@ function saveConfig() {
     fetch("/cgi-bin/set_ems.cgi?source=" + src + "&ip_dm=" + ipDm + "&ip_sma=" + ipSma +
           "&unit_dm=" + uDm + "&ip_ems_t=" + ipEmsT + "&ip_ems_s=" + ipEmsS).then(function (r) { return r.text(); }),
     fetch("/cgi-bin/set_sim.cgi?sim=" + sim).then(function (r) { return r.text(); }),
-    fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms).then(function (r) { return r.text(); })
+    fetch("/cgi-bin/set_grid.cgi?chg=" + gChg + "&dis=" + gDis + "&use_ems=" + gEms).then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/set_griddraw.cgi?en=" + gdEn + "&kw=" + gdKw).then(function (r) { return r.text(); })
   ])
     .then(function (results) {
       // CGIs melden Schreibfehler als "FEHLER:..." - nicht als HTTP-Fehler!

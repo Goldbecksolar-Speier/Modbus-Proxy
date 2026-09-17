@@ -142,7 +142,7 @@ done
 for base in ip_t ip_b cap_t cap_b proxy_mode split_mode proxy_registers sim proxy_enabled \
             grid_max_chg grid_max_dis grid_use_ems test_max_kw \
             ems_source ip_dm unit_dm ip_sma ip_ems_t ip_ems_s en_t en_b en_sma \
-            dev_poll_interval; do
+            dev_poll_interval griddraw_en griddraw_kw; do
     f="/etc/tesvolt_$base"
     [ -f "$f" ] || touch "$f"
     if chown uhttpd:uhttpd "$f" 2>/dev/null; then

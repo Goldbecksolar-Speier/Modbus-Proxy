@@ -33,6 +33,16 @@
 #  * WICHTIG: EXC:<n> heisst der Proxy LEBT (Modbus-Exception ist eine
 #    gueltige Antwort, z.B. Ziel-Batterie nicht erreichbar). Nur bei
 #    ERR:* (connect refused / timeout) wird der Proxy neu gestartet.
+#  * Solis Netzbezug-Begrenzung (setup.html, Register 44100-44103,
+#    Remote Dispatch Mode V0100 - read-only am Geraet verifiziert
+#    2026-09-17): CGI (uhttpd) schreibt nur /etc/tesvolt_griddraw_en/_kw,
+#    der Watchdog (root) schreibt alle ~60 s die Register nach (Geraet
+#    hat einen EIGENEN Failsafe-Timer, Register 44101, Default 5 min -
+#    OHNE periodisches Refresh faellt das Geraet automatisch in den
+#    Normalbetrieb zurueck). Bei Deaktivieren wird 44100=0 EINMALIG
+#    explizit geschrieben, statt auf den Geraete-Timeout zu warten.
+#    44102 ist ein Bitfeld (BIT00=Netzbezug, BIT01=Einspeisung, fremd) -
+#    Read-Modify-Write, um BIT01 nicht zu beruehren.
 # =====================================================================
 
 LOG="/var/log/ems_watchdog.log"
@@ -42,6 +52,8 @@ MB="/usr/local/bin/mb_cli.lua"
 BS_FAIL=0
 BS_FAIL_LIMIT=3
 STOP_LOGGED=0
+GRIDDRAW_LAST=0
+GRIDDRAW_WAS_EN=0
 
 logmsg() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG"
@@ -366,6 +378,64 @@ mirror_tick() {
     chmod 644 /tmp/emsproxy_swports 2>/dev/null
 }
 
+# ---------------------------------------------------------------------
+# Solis Netzbezug-Begrenzung (setup.html -> set_griddraw.cgi -> hier).
+# Laeuft unabhaengig vom Tesvolt/BLUESUN-Proxy-Enable (anderes Geraet,
+# anderer Zweck: Solis-eigener "Remote Dispatch Mode", siehe Kopf-
+# kommentar). IP kommt aus dem bereits vorhandenen /etc/tesvolt_ip_ems_s
+# (Setup: "Solis EMS IP"), damit keine zweite IP-Eingabe noetig ist.
+# ---------------------------------------------------------------------
+griddraw_tick() {
+    EN=$(cat /etc/tesvolt_griddraw_en 2>/dev/null | tr -cd '01')
+    [ -z "$EN" ] && EN=0
+    IP=$(cat /etc/tesvolt_ip_ems_s 2>/dev/null)
+
+    FORCE=0
+    if [ -f /tmp/emsproxy_griddraw_cfgchange ]; then
+        rm -f /tmp/emsproxy_griddraw_cfgchange
+        FORCE=1
+    fi
+
+    if [ "$EN" != "1" ] || [ -z "$IP" ]; then
+        if [ "$GRIDDRAW_WAS_EN" = "1" ] && [ -n "$IP" ]; then
+            lua "$MB" write "$IP" 502 1 44100 0 >/dev/null 2>&1
+            logmsg "Grid-Draw-Limit deaktiviert -> 44100=0 (Solis $IP)"
+        fi
+        GRIDDRAW_WAS_EN=0
+        return
+    fi
+
+    NOW=$(date +%s)
+    if [ "$FORCE" = "0" ] && [ $((NOW - GRIDDRAW_LAST)) -lt 60 ]; then
+        return
+    fi
+    GRIDDRAW_LAST=$NOW
+
+    KW=$(cat /etc/tesvolt_griddraw_kw 2>/dev/null | tr -cd '0-9.')
+    [ -z "$KW" ] && KW=0
+    # Register 44103 ist in 100-W-Schritten (Doku); awk statt Shell-
+    # Arithmetik, damit Dezimalwerte wie 1.5 kW moeglich sind.
+    REGVAL=$(awk -v k="$KW" 'BEGIN{v=k*10; if(v<0)v=0; printf "%d", v}')
+
+    # 44102 ist ein Bitfeld - erst lesen, dann BIT00 setzen (BIT01 unberuehrt)
+    CUR=$(lua "$MB" read "$IP" 502 1 3 44102 2>/dev/null)
+    case "$CUR" in
+        OK:*)
+            CV=${CUR#OK:}
+            NEWV=$((CV | 1))
+            lua "$MB" write "$IP" 502 1 44102 "$NEWV" >/dev/null 2>&1
+            lua "$MB" write "$IP" 502 1 44101 5 >/dev/null 2>&1
+            lua "$MB" write "$IP" 502 1 44103 "$REGVAL" >/dev/null 2>&1
+            lua "$MB" write "$IP" 502 1 44100 1 >/dev/null 2>&1
+            logmsg "Grid-Draw-Limit aktiv: ${KW} kW (Reg 44103=$REGVAL) auf Solis $IP"
+            GRIDDRAW_WAS_EN=1
+            ;;
+        *)
+            logmsg "Grid-Draw-Limit: Solis $IP nicht erreichbar ($CUR) - kein Schreibversuch"
+            ;;
+    esac
+}
+
 logmsg "Watchdog gestartet"
 
 while true; do
@@ -381,6 +451,9 @@ while true; do
 
     # 0c) Port-Mirroring: UI-Anforderung umsetzen + Portstatus schreiben
     mirror_tick
+
+    # 0d) Solis Netzbezug-Begrenzung: unabhaengig vom Proxy-Enable
+    griddraw_tick
 
     # 0) Start/Stop-Wunsch der Setup-UI umsetzen
     ENABLED=$(cat /etc/tesvolt_proxy_enabled 2>/dev/null)
