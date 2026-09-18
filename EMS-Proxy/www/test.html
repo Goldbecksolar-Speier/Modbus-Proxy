@@ -356,14 +356,35 @@ document.getElementById("sol_standby").addEventListener("click", function () {
 var solMaxKw = 10;
 var solLastKnownKw = 0; // letzter bekannter ECHTER Geraete-Sollwert (siehe getsetpoint-Fix)
 (function () {
-  fetch("/cgi-bin/get_param.cgi?name=solis_test_max_kw").then(function (r) { return r.text(); })
-    .then(function (v) {
-      var n = parseFloat(v);
+  Promise.all([
+    fetch("/cgi-bin/get_param.cgi?name=solis_test_max_kw").then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/get_param.cgi?name=griddraw_en").then(function (r) { return r.text(); }),
+    fetch("/cgi-bin/get_param.cgi?name=griddraw_kw").then(function (r) { return r.text(); })
+  ])
+    .then(function (vals) {
+      var n = parseFloat(vals[0]);
       if (!isNaN(n) && n > 0) solMaxKw = n;
+      // Das Netzbezug-Limit-Feature (Setup-Seite, Register 44102/44103)
+      // begrenzt unabhaengig vom Test-Regler, wieviel Leistung das System
+      // aus dem Netz ziehen darf - das deckelt damit auch, wie schnell/weit
+      // die Batterie beim Laden ueber den Sollwert-Regler hochfahren kann.
+      // Nutzer-Beobachtung 2026-09-18: Sollwert 2.5 kW gesetzt, Ist-Leistung
+      // blieb bei ~1.6-2.0 kW haengen, weil griddraw_kw=2 aktiv war - kein
+      // Regler-Defekt, sondern ein zweites, unabhaengig aktives Feature.
+      // Die Begrenzung betrifft nur das LADEN (Netzbezug), nicht Entladen.
+      var gridEn = vals[1].trim() === "1";
+      var gridKw = parseFloat(vals[2]);
+      var chargeMaxKw = solMaxKw;
+      var noteExtra = "";
+      if (gridEn && !isNaN(gridKw) && gridKw > 0 && gridKw < solMaxKw) {
+        chargeMaxKw = gridKw;
+        noteExtra = " - Netzbezug-Limit AKTIV (Setup): Laden zusaetzlich auf " +
+          gridKw + " kW begrenzt (betrifft nicht das Entladen)";
+      }
       var slider = document.getElementById("sol_slider");
-      slider.min = -solMaxKw; slider.max = solMaxKw;
+      slider.min = -solMaxKw; slider.max = chargeMaxKw;
       document.getElementById("sol_limit_note").innerText =
-        "Limit: +/-" + solMaxKw + " kW (aus /etc/tesvolt_solis_test_max_kw)";
+        "Limit: -" + solMaxKw + " / +" + chargeMaxKw + " kW (aus /etc/tesvolt_solis_test_max_kw)" + noteExtra;
       return fetch("/cgi-bin/test_solis.cgi?action=getsetpoint");
     })
     .then(function (r) { return r.text(); })
