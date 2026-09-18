@@ -232,6 +232,7 @@ kein Umrechnen noetig). Register ist in Watt - Limit hier bewusst in <b>kW</b> g
 Ampere), weil die Batteriespannung mit dem Ladezustand schwankt und eine Ampere-Vorgabe die
 Sicherheitsgrenze ungenau machen wuerde. Nur EIN Sollwert-Register unabhaengig davon, ob 1 oder 2
 Batterie-Anschluesse verkabelt sind (Solis-Sonderfall: kombinierter Anschluss = doppelter Bereich).</p>
+<div id="sol_who_badge" style="display:none;padding:6px 10px;margin-bottom:8px;border-radius:4px;font-weight:bold;"></div>
 <label><input type="checkbox" id="sol_confirm"> Ich weiss, dass ich am ECHTEN Geraet schreibe</label><br>
 <button id="sol_status">Status lesen (read-only)</button>
 <button id="sol_init">Init (Fernsteuerung an)</button>
@@ -410,6 +411,33 @@ function solPowerPoll() {
 // bewusst vorsichtig oberhalb der 60-s-Slot-Poll-Baseline.
 solPowerPoll();
 setInterval(solPowerPoll, 10000);
+
+// "Wer testet gerade"-Anzeige: reiner lokaler Dateicheck auf dem Router,
+// KEIN Modbus-Zugriff - daher unbedenklich haeufig pollbar (5s), unabhaengig
+// davon ob DIESER Tab selbst gerade testet. Zweck: warnt, wenn irgendeine
+// andere Session (zweiter eigener Tab oder ein Kollege) den Regler bereits
+// aktiv haelt, bevor man selbst unbemerkt dazwischenfunkt (Nutzerwunsch
+// 2026-09-18 nach einem Verbindungskonflikt durch zwei gleichzeitige Tests).
+function solWhoPoll() {
+  fetch("/cgi-bin/test_solis.cgi?action=whostatus").then(function (r) { return r.text(); })
+    .then(function (t) {
+      var badge = document.getElementById("sol_who_badge");
+      var m = t.match(/ACTIVE:(\d+)/);
+      if (m) {
+        var since = new Date(parseInt(m[1], 10) * 1000);
+        badge.style.display = "block";
+        badge.style.background = "#ffefc2";
+        badge.style.color = "#7a5b00";
+        badge.innerText = "Solis-Test AKTIV seit " + since.toLocaleTimeString() +
+          " - moeglicherweise arbeitet gerade jemand anderes am Regler. Vor eigenen Aenderungen kurz abstimmen.";
+      } else {
+        badge.style.display = "none";
+      }
+    })
+    .catch(function () {});
+}
+solWhoPoll();
+setInterval(solWhoPoll, 5000);
 
 var solSliderPending = false;
 document.getElementById("sol_slider").addEventListener("input", function () {

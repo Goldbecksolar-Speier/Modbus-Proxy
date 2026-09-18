@@ -14,6 +14,7 @@
 # =====================================================================
 HB=/tmp/solis_test_hb
 ACTIVE=/tmp/solis_test_active
+STARTED=/tmp/solis_test_started
 TIMEOUT=60
 LOG=/var/log/ems_proxy.log
 
@@ -28,9 +29,14 @@ while [ -f "$ACTIVE" ]; do
     hb=$(cat "$HB" 2>/dev/null)
     [ -n "$hb" ] || hb=0
     if [ $((now - hb)) -gt $TIMEOUT ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') SOLISTESTGUARD: Heartbeat-Timeout (> ${TIMEOUT}s) - deaktiviere Fernsteuerung (Reg 44280=0)" >> "$LOG"
-        /usr/bin/lua /usr/local/bin/mb_cli.lua write "$IP" 502 "$UNIT" 44280 0 >> "$LOG" 2>&1
-        rm -f "$ACTIVE"
+        # Reg 44105 (Control Mode) = 1 = "Battery Standby" - NICHT mehr das
+        # alte 44280 (Remote Active Power Control), das seit der Umstellung
+        # auf das Remote-Dispatch-Real-Time-Control-Register-Set (2026-09-18,
+        # siehe test_solis.cgi) nicht mehr das wirksame Steuerregister ist.
+        # Ein Failsafe, der das falsche Register schreibt, ist WIRKUNGSLOS.
+        echo "$(date '+%Y-%m-%d %H:%M:%S') SOLISTESTGUARD: Heartbeat-Timeout (> ${TIMEOUT}s) - deaktiviere Fernsteuerung (Reg 44105=1)" >> "$LOG"
+        /usr/bin/lua /usr/local/bin/mb_cli.lua write "$IP" 502 "$UNIT" 44105 1 >> "$LOG" 2>&1
+        rm -f "$ACTIVE" "$STARTED"
         exit 0
     fi
     sleep 5

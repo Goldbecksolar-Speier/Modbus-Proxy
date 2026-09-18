@@ -62,8 +62,9 @@ local qs      = os.getenv("QUERY_STRING") or ""
 local action  = qs:match("action=(%w+)") or ""
 local confirm = qs:match("confirm=1") ~= nil
 
-local HB     = "/tmp/solis_test_hb"
-local ACTIVE = "/tmp/solis_test_active"
+local HB      = "/tmp/solis_test_hb"
+local ACTIVE  = "/tmp/solis_test_active"
+local STARTED = "/tmp/solis_test_started"  -- Startzeit der laufenden Test-Session (fuer "wer testet gerade"-Anzeige)
 
 local R_DISPATCH = 44100  -- Remote Dispatch Mode Switch (Hauptschalter fuer 44100-44199!)
 local R_FAILSAFE = 44101  -- Failsafe-Intervall in Minuten (Default 5)
@@ -150,15 +151,39 @@ local function set_active()
   heartbeat()
   local f = io.open(ACTIVE, "w")
   if f then f:write("1") f:close() end
+  -- STARTED nur beim ERSTEN Aktivieren einer Session schreiben (nicht bei
+  -- jedem weiteren Sollwert-Wechsel neu ueberschreiben) - sonst wuerde die
+  -- "aktiv seit"-Anzeige bei jeder Sollwert-Aenderung auf "jetzt" zurueckspringen.
+  if not io.open(STARTED, "r") then
+    local sf = io.open(STARTED, "w")
+    if sf then sf:write(tostring(os.time())) sf:close() end
+  end
   os.execute("pgrep -f solis_test_guard >/dev/null 2>&1 || " ..
              "(/usr/local/bin/solis_test_guard.sh >/dev/null 2>&1 &)")
 end
 
 local function clear_active()
   os.remove(ACTIVE)
+  os.remove(STARTED)
 end
 
-if action == "status" then
+if action == "whostatus" then
+  -- Reiner lokaler Dateicheck, KEIN Modbus-Zugriff - beliebig oft/haeufig
+  -- pollbar, ohne den Solis-Datenlogger zusaetzlich zu belasten. Zeigt an,
+  -- ob GERADE (von irgendeinem Browser/Kollegen) ein Test aktiv ist, damit
+  -- eine zweite Person nicht unbemerkt in eine laufende Session eingreift
+  -- (Nutzerwunsch 2026-09-18, nachdem zwei gleichzeitige Test-Sessions zu
+  -- einem Verbindungskonflikt fuehrten).
+  local sf = io.open(STARTED, "r")
+  if sf then
+    local t = sf:read("*l")
+    sf:close()
+    print("ACTIVE:" .. (t or "?"))
+  else
+    print("INACTIVE")
+  end
+
+elseif action == "status" then
   print("44100 (Hauptschalter) -> " .. mb_read(R_DISPATCH)); pause()
   print("44101 (Failsafe-Min)  -> " .. mb_read(R_FAILSAFE)); pause()
   print("44105 (Control Mode)  -> " .. mb_read(R_CTRLMODE)); pause()
