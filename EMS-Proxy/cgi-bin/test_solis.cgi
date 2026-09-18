@@ -4,12 +4,21 @@
 -- (fuer die Geraete-Testseite test.html; laeuft AM PROXY VORBEI, reiner
 -- Geraetetest, hat nichts mit dem EMS-Proxy/Status-Hauptseite zu tun)
 --
--- Solis "Remote Active Power Control" (V0100, Doku S.109-110):
---   44280 (Bitfeld): BIT00-03 Port-Auswahl - 0=aus, 2=AC-Netz-Port,
---          4=Batterie-Port (exklusiv, nur EINE Auswahl gleichzeitig)
---   44282~44283 (S32, 1W): Sollwert Batterieleistung, + = Laden, - = Entladen
---   43282: Timeout in Minuten (Default 5) - Geraet setzt die Port-Auswahl
---          selbst zurueck, wenn nicht regelmaessig neu geschrieben wird
+-- Solis "Remote Dispatch Mode - Real-Time Control" (Doku S.89-91).
+-- UMGESTELLT 2026-09-18 (Learning): urspruenglich wurde das "Remote
+-- Active Power Control"-Register (44280+) benutzt (Kapitel "Frequency
+-- Control Ancillary Service", S.109-110) - Schreibbefehle wurden vom
+-- Geraet mit OK bestaetigt, hatten aber KEINE Wirkung. Vermutlicher
+-- Grund: Register 44105 ("Control Mode") stand per Default auf 1 =
+-- "Battery Standby control (no charging/discharging)" und blockierte
+-- damit vermutlich jede Batterieaktion, egal ueber welches Register.
+-- Jetzt stattdessen das dafuer vorgesehene, allgemeine Register-Set:
+--   44100: Hauptschalter (Remote Dispatch Mode Switch)
+--   44101: Failsafe-Intervall in Minuten (Default 5)
+--   44105: Control Mode - 1=Battery Standby (Default!), 2=Battery
+--          charge/discharge control (das, was wir wollen)
+--   44106~44107 (S32, 10W): Sollwert - nur wirksam wenn 44105=2;
+--          + = Laden, - = Entladen
 --   Nur EIN Sollwert-Registerpaar unabhaengig davon, ob 1 oder 2
 --   Batterie-Anschluesse physisch verkabelt sind - bei kombiniertem
 --   Anschluss verdoppelt sich nur der zulaessige Wertebereich.
@@ -57,10 +66,10 @@ local HB     = "/tmp/solis_test_hb"
 local ACTIVE = "/tmp/solis_test_active"
 
 local R_DISPATCH = 44100  -- Remote Dispatch Mode Switch (Hauptschalter fuer 44100-44199!)
-local R_PORTSEL  = 44280
-local R_PWR_HI   = 44282
-local R_PWR_LO   = 44283
-local R_TIMEOUT  = 43282
+local R_FAILSAFE = 44101  -- Failsafe-Intervall in Minuten (Default 5)
+local R_CTRLMODE = 44105  -- Control Mode: 1=Standby, 2=Battery charge/discharge control
+local R_PWR_HI   = 44106  -- Power Setting S32 Hi-Word, Einheit 10 W!
+local R_PWR_LO   = 44107  -- Power Setting S32 Lo-Word, Einheit 10 W!
 
 local function pause()
   if ok_socket and socket.sleep then socket.sleep(0.7) else os.execute("sleep 1") end
@@ -133,17 +142,17 @@ local function clear_active()
 end
 
 if action == "status" then
-  print("44100 -> " .. mb_read(R_DISPATCH)); pause()
-  print("44280 -> " .. mb_read(R_PORTSEL)); pause()
-  print("44282 -> " .. mb_read(R_PWR_HI)); pause()
-  print("44283 -> " .. mb_read(R_PWR_LO)); pause()
-  print("43282 -> " .. mb_read(R_TIMEOUT))
+  print("44100 (Hauptschalter) -> " .. mb_read(R_DISPATCH)); pause()
+  print("44101 (Failsafe-Min)  -> " .. mb_read(R_FAILSAFE)); pause()
+  print("44105 (Control Mode)  -> " .. mb_read(R_CTRLMODE)); pause()
+  print("44106 (Sollwert Hi)   -> " .. mb_read(R_PWR_HI)); pause()
+  print("44107 (Sollwert Lo)   -> " .. mb_read(R_PWR_LO))
 
 elseif action == "init" then
   if not confirm then print("ERR:confirm fehlt") os.exit(0) end
   set_active()
   print("44100=1 (Hauptschalter) -> " .. mb_write(R_DISPATCH, 1)); pause()
-  print("44280=4 -> " .. mb_write(R_PORTSEL, 4))
+  print("44105=2 (Battery charge/discharge control) -> " .. mb_write(R_CTRLMODE, 2))
   print("Init gesendet. Failsafe-Guard aktiv (60 s).")
 
 elseif action == "setpower" then
@@ -154,13 +163,15 @@ elseif action == "setpower" then
     print(string.format("ERR:Limit ueberschritten (|%.1f| > %.1f kW)", kw, maxkw))
     os.exit(0)
   end
-  local watt = math.floor(kw * 1000 + (kw >= 0 and 0.5 or -0.5))
-  local hi, lo = split_s32(watt)
+  -- 44106/107 sind in 10-W-Schritten (anders als das alte 44282/283-Paar,
+  -- das 1-W-Schritte nutzte) - deshalb hier durch 10 teilen statt direkt Watt.
+  local units10w = math.floor(kw * 100 + (kw >= 0 and 0.5 or -0.5))
+  local hi, lo = split_s32(units10w)
   set_active()
   print("44100=1 -> " .. mb_write(R_DISPATCH, 1)); pause()
-  print("44280=4 -> " .. mb_write(R_PORTSEL, 4)); pause()
-  print(string.format("44282=%d -> %s", hi, mb_write(R_PWR_HI, hi))); pause()
-  print(string.format("44283=%d (%.2f kW) -> %s", lo, kw, mb_write(R_PWR_LO, lo)))
+  print("44105=2 -> " .. mb_write(R_CTRLMODE, 2)); pause()
+  print(string.format("44106=%d -> %s", hi, mb_write(R_PWR_HI, hi))); pause()
+  print(string.format("44107=%d (%.2f kW) -> %s", lo, kw, mb_write(R_PWR_LO, lo)))
   print("Sollwert gesendet. Failsafe-Guard aktiv (60 s).")
 
 elseif action == "standby" then
@@ -168,21 +179,21 @@ elseif action == "standby" then
   -- Hauptschalter fuer den GESAMTEN Bereich 44100-44199 - dort liegt auch
   -- das Netzbezug-Limit-Feature (44100-44104). Faellt dieses Standby, waere
   -- sonst potenziell auch ein parallel aktives Netzbezug-Limit betroffen.
-  print("44280=0 -> " .. mb_write(R_PORTSEL, 0))
+  print("44105=1 (Battery Standby) -> " .. mb_write(R_CTRLMODE, 1))
   clear_active()
   print("Fernsteuerung deaktiviert (44100 bewusst unveraendert gelassen, siehe Kommentar).")
 
 elseif action == "heartbeat" then
   -- WICHTIG: anders als beim BLUESUN/UDAN-EMS (kein eigener Timeout) hat
-  -- der Solis einen geraeteseitigen Timeout (Register 43282, Default 5
-  -- Minuten) - der Heartbeat muss deshalb die Port-Auswahl aktiv am
-  -- Geraet auffrischen, nicht nur lokal eine Zeitstempel-Datei setzen.
+  -- der Solis einen geraeteseitigen Failsafe-Timeout (Register 44101,
+  -- Default 5 Minuten) - der Heartbeat muss deshalb den Control Mode aktiv
+  -- am Geraet auffrischen, nicht nur lokal eine Zeitstempel-Datei setzen.
   -- Sonst faellt die Fernsteuerung nach 5 Minuten von selbst zurueck,
   -- waehrend der Sollwert im Register stehen bleibt (Learning 2026-09-18).
   heartbeat()
   if io.open(ACTIVE, "r") then
     print("Refresh 44100 -> " .. mb_write(R_DISPATCH, 1)); pause()
-    print("Refresh 44280 -> " .. mb_write(R_PORTSEL, 4))
+    print("Refresh 44105 -> " .. mb_write(R_CTRLMODE, 2))
   else
     print("OK:heartbeat (inaktiv, kein Refresh)")
   end
