@@ -165,8 +165,18 @@ elseif action == "standby" then
   print("Fernsteuerung deaktiviert.")
 
 elseif action == "heartbeat" then
+  -- WICHTIG: anders als beim BLUESUN/UDAN-EMS (kein eigener Timeout) hat
+  -- der Solis einen geraeteseitigen Timeout (Register 43282, Default 5
+  -- Minuten) - der Heartbeat muss deshalb die Port-Auswahl aktiv am
+  -- Geraet auffrischen, nicht nur lokal eine Zeitstempel-Datei setzen.
+  -- Sonst faellt die Fernsteuerung nach 5 Minuten von selbst zurueck,
+  -- waehrend der Sollwert im Register stehen bleibt (Learning 2026-09-18).
   heartbeat()
-  print("OK:heartbeat")
+  if io.open(ACTIVE, "r") then
+    print("Refresh -> " .. mb_write(R_PORTSEL, 4))
+  else
+    print("OK:heartbeat (inaktiv, kein Refresh)")
+  end
 
 elseif action == "power" then
   -- Tatsaechliche Batterieleistung (33149/33150, FC04) + Richtung
