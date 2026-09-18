@@ -209,7 +209,7 @@ elseif action == "getsetpoint" then
   -- bei mehreren offenen Browser-Tabs auf derselben Seite).
   local hi_s = mb_read(R_PWR_HI); pause_read()
   local lo_s = mb_read(R_PWR_LO)
-  local hi, lo = tonumber(hi_s), tonumber(lo_s)
+  local hi, lo = tonumber(hi_s:match("OK:(-?%d+)")), tonumber(lo_s:match("OK:(-?%d+)"))
   if not hi or not lo then print("ERR:Lesefehler (" .. hi_s .. "/" .. lo_s .. ")") os.exit(0) end
   print("OK:" .. (combine_s32(hi, lo) * 10))
 
