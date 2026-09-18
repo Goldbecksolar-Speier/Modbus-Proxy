@@ -384,8 +384,14 @@ function solPowerPoll() {
     })
     .catch(function () {});
 }
+// ACHTUNG (Learning 2026-09-18): urspruenglich 5000 ms mit DREI separaten
+// mb_cli-Verbindungen je Zyklus hat den Solis-Datenlogger nachweislich
+// ueberlastet (>50 TIME_WAIT-Verbindungen, SolisCloud-App gestoert,
+// Sollwert-Steuerung wirkte "traege"). Server-seitig jetzt EIN Blockread
+// statt drei Verbindungen (siehe test_solis.cgi); 10 s bleibt trotzdem
+// bewusst vorsichtig oberhalb der 60-s-Slot-Poll-Baseline.
 solPowerPoll();
-setInterval(solPowerPoll, 5000);
+setInterval(solPowerPoll, 10000);
 
 var solSliderPending = false;
 document.getElementById("sol_slider").addEventListener("input", function () {

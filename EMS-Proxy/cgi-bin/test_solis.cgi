@@ -183,14 +183,23 @@ elseif action == "power" then
   -- (33135: 0=Laden,1=Entladen) - Betrag ist am Register vorzeichenlos,
   -- Richtung kommt separat (Learning, siehe test.html-Hinweise). Gleiche
   -- Vorzeichenkonvention wie der Regler oben: + = Laden, - = Entladen.
-  local rhi = mb_read4(33149):match("OK:(-?%d+)")
-  pause_read()
-  local rlo = mb_read4(33150):match("OK:(-?%d+)")
-  pause_read()
-  local rdir = mb_read4(33135):match("OK:(-?%d+)")
-  if not (rhi and rlo and rdir) then print("ERR:Lesefehler") os.exit(0) end
-  local mag = math.abs(combine_s32(tonumber(rhi), tonumber(rlo)))
-  local watt = (tonumber(rdir) == 0) and mag or -mag
+  --
+  -- EIN Blockread (33135..33150, 16 Register) statt drei Einzelreads ueber
+  -- mb_cli.lua: jeder mb_cli-Aufruf oeffnet eine eigene TCP-Verbindung
+  -- (kein Pooling) - drei Aufrufe alle 5s haben den Datenlogger nachweislich
+  -- ueberlastet (Learning 2026-09-18: >50 TIME_WAIT-Verbindungen, Solis
+  -- reagierte traege, SolisCloud-App gestoert). profile_loader.lua liest
+  -- den ganzen Bereich in EINER Verbindung (dieselbe Bibliothek, die auch
+  -- device_poll.lua benutzt).
+  local L = dofile("/usr/local/bin/profile_loader.lua")
+  local words, err = L.read_regs_retry(ip, 502, unit, 4, 33135, 16, 3, 2, 0.3)
+  if not words then print("ERR:" .. tostring(err)) os.exit(0) end
+  local dir = words[1]                      -- 33135
+  local hi, lo = words[15], words[16]        -- 33149, 33150 (Offset 14,15)
+  if hi > 32767 then hi = hi - 65536 end
+  if lo > 32767 then lo = lo - 65536 end
+  local mag = math.abs(combine_s32(hi, lo))
+  local watt = (dir == 0) and mag or -mag
   print("OK:" .. watt)
 
 else
