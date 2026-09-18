@@ -198,6 +198,21 @@ elseif action == "heartbeat" then
     print("OK:heartbeat (inaktiv, kein Refresh)")
   end
 
+elseif action == "getsetpoint" then
+  -- Liefert den tatsaechlich am Geraet konfigurierten Sollwert (44106/107)
+  -- als einfachen OK:<Watt>-Wert, damit die Seite beim (Neu-)Laden den
+  -- echten Zustand anzeigen kann statt immer beim HTML-Default 0 zu starten.
+  -- Ohne diesen Abgleich zeigt jeder neue/neu geladene Browser-Tab 0.0 kW,
+  -- obwohl am Geraet ein anderer Sollwert aktiv ist - eine Beruehrung des
+  -- Reglers in diesem Tab wuerde den echten Sollwert dann unbemerkt
+  -- ueberschreiben (Nutzer-Beobachtung 2026-09-18: "wenig, was ich erhoehe"
+  -- bei mehreren offenen Browser-Tabs auf derselben Seite).
+  local hi_s = mb_read(R_PWR_HI); pause_read()
+  local lo_s = mb_read(R_PWR_LO)
+  local hi, lo = tonumber(hi_s), tonumber(lo_s)
+  if not hi or not lo then print("ERR:Lesefehler (" .. hi_s .. "/" .. lo_s .. ")") os.exit(0) end
+  print("OK:" .. (combine_s32(hi, lo) * 10))
+
 elseif action == "power" then
   -- Tatsaechliche Batterieleistung (33149/33150, FC04) + Richtung
   -- (33135: 0=Laden,1=Entladen) - Betrag ist am Register vorzeichenlos,

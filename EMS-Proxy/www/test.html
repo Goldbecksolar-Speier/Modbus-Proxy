@@ -361,7 +361,22 @@ var solMaxKw = 10;
       slider.min = -solMaxKw; slider.max = solMaxKw;
       document.getElementById("sol_limit_note").innerText =
         "Limit: +/-" + solMaxKw + " kW (aus /etc/tesvolt_solis_test_max_kw)";
-    }).catch(function () {});
+      return fetch("/cgi-bin/test_solis.cgi?action=getsetpoint");
+    })
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      // Regler beim Laden auf den ECHTEN Geraete-Sollwert setzen statt beim
+      // HTML-Default 0 zu starten - wichtig bei mehreren offenen Tabs, sonst
+      // zeigt ein neu geladener Tab faelschlich 0 an, obwohl das Geraet einen
+      // anderen Sollwert faehrt (siehe Kommentar in test_solis.cgi). Nur der
+      // Wert wird gesetzt, KEIN change-Event ausgeloest - kein Schreibzugriff.
+      var m = t.match(/OK:(-?\d+)/);
+      if (!m) return;
+      var kw = parseInt(m[1], 10) / 1000;
+      document.getElementById("sol_slider").value = kw;
+      document.getElementById("sol_kw_display").innerText = kw.toFixed(1) + " kW";
+    })
+    .catch(function () {});
 })();
 
 // Leistungs-Balken: zeigt die tatsaechliche Batterieleistung (Ist-Wert),
