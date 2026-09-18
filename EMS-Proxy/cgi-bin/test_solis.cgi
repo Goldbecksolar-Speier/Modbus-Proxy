@@ -99,11 +99,28 @@ local function mb_read4(addr)
   return r
 end
 
-local function mb_write(addr, val)
+local function mb_write_once(addr, val)
   local p = io.popen(string.format(
     "/usr/bin/lua /usr/local/bin/mb_cli.lua write %s 502 %d %d %d", ip, unit, addr, val))
   local r = p:read("*l") or "ERR:no output"
   p:close()
+  return r
+end
+
+-- EIN automatischer Wiederholungsversuch bei Verbindungsfehlern (z.B.
+-- "ERR:connect timeout"), bevor der Aufrufer den Fehler sieht. Grund:
+-- bei mehreren gleichzeitig aktiven Browser-Tabs (Heartbeat/Leistungs-Poll
+-- ueberschneiden sich) verweigert das Solis-Datalogger-Gateway gelegentlich
+-- eine einzelne Verbindung - ein sofortiger Retry nach kurzer Pause reicht
+-- in der Praxis, da der Konflikt meist nur einen einzelnen Moment betrifft
+-- (Nutzer-Beobachtung 2026-09-18: zweiter Schreibversuch bei zwei offenen
+-- Tabs schlug mit ERR:connect timeout fehl).
+local function mb_write(addr, val)
+  local r = mb_write_once(addr, val)
+  if r:match("^ERR:") then
+    pause_read()
+    r = mb_write_once(addr, val)
+  end
   return r
 end
 
