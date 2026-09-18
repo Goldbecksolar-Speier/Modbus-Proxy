@@ -33,6 +33,9 @@ details.learn code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px;
         font-size: 11px; font-weight: bold; margin-left: 6px; vertical-align: middle; }
 .ltag.risk { background: #c0392b; }
 .ltag.info { background: #2e7dd1; }
+.pbar-wrap { width: 300px; height: 20px; background: #ddd; border-radius: 4px; overflow: hidden;
+             margin: 4px 0; display: inline-block; vertical-align: middle; }
+.pbar-fill { height: 100%; width: 50%; background: #999; transition: width .5s, background .5s; }
 </style>
 </head>
 <body>
@@ -235,7 +238,9 @@ Batterie-Anschluesse verkabelt sind (Solis-Sonderfall: kombinierter Anschluss = 
 <button id="sol_standby">Standby (Fernsteuerung aus)</button><br>
 Sollwert (kW): <input type="range" id="sol_slider" min="-10" max="10" step="0.1" value="0" style="width:300px;vertical-align:middle;">
 <b id="sol_kw_display">0.0 kW</b><br>
-<small id="sol_limit_note">Limit wird aus der Konfiguration geladen ...</small>
+<small id="sol_limit_note">Limit wird aus der Konfiguration geladen ...</small><br>
+Aktuelle Batterieleistung: <div class="pbar-wrap"><div id="sol_pbar" class="pbar-fill"></div></div>
+<b id="sol_pbar_kw">- kW</b> <small>(Ist-Wert, alle 5 s aktualisiert, Skala +/-60 kW - Mitte = 0)</small>
 <p><small>Mindestens 700 ms Abstand zwischen Schreibbefehlen (Herstellervorgabe fuer Steuerframes).
 Failsafe: Nach einem Schreibbefehl sendet die Seite alle 15 s einen Heartbeat. Bleibt er 60 s aus,
 setzt der Router die Fernsteuerung automatisch zurueck (zusaetzlich zum geraeteeigenen Timeout).</small></p>
@@ -358,6 +363,29 @@ var solMaxKw = 10;
         "Limit: +/-" + solMaxKw + " kW (aus /etc/tesvolt_solis_test_max_kw)";
     }).catch(function () {});
 })();
+
+// Leistungs-Balken: zeigt die tatsaechliche Batterieleistung (Ist-Wert),
+// unabhaengig davon ob der Regler gerade aktiv ist - laeuft immer, sobald
+// die Seite offen ist (reines Lesen, kein Schreibzugriff).
+var SOL_PBAR_SCALE_KW = 60; // Skalen-Vollausschlag, grosszuegig (Solis 50kW)
+function solPowerPoll() {
+  fetch("/cgi-bin/test_solis.cgi?action=power").then(function (r) { return r.text(); })
+    .then(function (t) {
+      var m = t.match(/OK:(-?\d+)/);
+      var bar = document.getElementById("sol_pbar");
+      var lbl = document.getElementById("sol_pbar_kw");
+      if (!m) { lbl.innerText = "- kW (Lesefehler)"; bar.style.width = "0%"; return; }
+      var w = parseInt(m[1], 10);
+      var kw = w / 1000;
+      var pct = Math.min(100, Math.round(Math.abs(kw) / SOL_PBAR_SCALE_KW * 100));
+      bar.style.width = pct + "%";
+      bar.style.background = (kw > 0.05) ? "#2e7dd1" : (kw < -0.05 ? "#e08a00" : "#999");
+      lbl.innerText = kw.toFixed(2) + " kW" + (kw > 0.05 ? " (Laden)" : (kw < -0.05 ? " (Entladen)" : ""));
+    })
+    .catch(function () {});
+}
+solPowerPoll();
+setInterval(solPowerPoll, 5000);
 
 var solSliderPending = false;
 document.getElementById("sol_slider").addEventListener("input", function () {

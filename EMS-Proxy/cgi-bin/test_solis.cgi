@@ -65,9 +65,25 @@ local function pause()
   if ok_socket and socket.sleep then socket.sleep(0.7) else os.execute("sleep 1") end
 end
 
+-- Kuerzere Pause fuer reine Lesevorgaenge (Herstellervorgabe: >= 300 ms
+-- zwischen Lese-Frames, nur Steuerframes brauchen die 700 ms oben).
+local function pause_read()
+  if ok_socket and socket.sleep then socket.sleep(0.3) else os.execute("sleep 1") end
+end
+
 local function mb_read(addr)
   local p = io.popen(string.format(
     "/usr/bin/lua /usr/local/bin/mb_cli.lua read %s 502 %d 3 %d", ip, unit, addr))
+  local r = p:read("*l") or "ERR:no output"
+  p:close()
+  return r
+end
+
+-- Messregister (33xxx) sind FC04 (Input), anders als die Steuerregister
+-- oben (43xxx/44xxx = FC03 Holding).
+local function mb_read4(addr)
+  local p = io.popen(string.format(
+    "/usr/bin/lua /usr/local/bin/mb_cli.lua read %s 502 %d 4 %d", ip, unit, addr))
   local r = p:read("*l") or "ERR:no output"
   p:close()
   return r
@@ -86,6 +102,16 @@ local function split_s32(v)
   local hi = math.floor(v / 65536) % 65536
   local lo = v % 65536
   return hi, lo
+end
+
+-- Kehrfunktion: zwei roh gelesene 16-Bit-Woerter (mb_cli liefert sie
+-- bereits als signed s16) zu einem s32-Wert zusammensetzen.
+local function combine_s32(hiv, lov)
+  if hiv < 0 then hiv = hiv + 65536 end
+  if lov < 0 then lov = lov + 65536 end
+  local v = hiv * 65536 + lov
+  if v > 2147483647 then v = v - 4294967296 end
+  return v
 end
 
 local function heartbeat()
@@ -141,6 +167,21 @@ elseif action == "standby" then
 elseif action == "heartbeat" then
   heartbeat()
   print("OK:heartbeat")
+
+elseif action == "power" then
+  -- Tatsaechliche Batterieleistung (33149/33150, FC04) + Richtung
+  -- (33135: 0=Laden,1=Entladen) - Betrag ist am Register vorzeichenlos,
+  -- Richtung kommt separat (Learning, siehe test.html-Hinweise). Gleiche
+  -- Vorzeichenkonvention wie der Regler oben: + = Laden, - = Entladen.
+  local rhi = mb_read4(33149):match("OK:(-?%d+)")
+  pause_read()
+  local rlo = mb_read4(33150):match("OK:(-?%d+)")
+  pause_read()
+  local rdir = mb_read4(33135):match("OK:(-?%d+)")
+  if not (rhi and rlo and rdir) then print("ERR:Lesefehler") os.exit(0) end
+  local mag = math.abs(combine_s32(tonumber(rhi), tonumber(rlo)))
+  local watt = (tonumber(rdir) == 0) and mag or -mag
+  print("OK:" .. watt)
 
 else
   print("ERR:unbekannte action")
