@@ -56,10 +56,11 @@ local confirm = qs:match("confirm=1") ~= nil
 local HB     = "/tmp/solis_test_hb"
 local ACTIVE = "/tmp/solis_test_active"
 
-local R_PORTSEL = 44280
-local R_PWR_HI  = 44282
-local R_PWR_LO  = 44283
-local R_TIMEOUT = 43282
+local R_DISPATCH = 44100  -- Remote Dispatch Mode Switch (Hauptschalter fuer 44100-44199!)
+local R_PORTSEL  = 44280
+local R_PWR_HI   = 44282
+local R_PWR_LO   = 44283
+local R_TIMEOUT  = 43282
 
 local function pause()
   if ok_socket and socket.sleep then socket.sleep(0.7) else os.execute("sleep 1") end
@@ -132,6 +133,7 @@ local function clear_active()
 end
 
 if action == "status" then
+  print("44100 -> " .. mb_read(R_DISPATCH)); pause()
   print("44280 -> " .. mb_read(R_PORTSEL)); pause()
   print("44282 -> " .. mb_read(R_PWR_HI)); pause()
   print("44283 -> " .. mb_read(R_PWR_LO)); pause()
@@ -140,6 +142,7 @@ if action == "status" then
 elseif action == "init" then
   if not confirm then print("ERR:confirm fehlt") os.exit(0) end
   set_active()
+  print("44100=1 (Hauptschalter) -> " .. mb_write(R_DISPATCH, 1)); pause()
   print("44280=4 -> " .. mb_write(R_PORTSEL, 4))
   print("Init gesendet. Failsafe-Guard aktiv (60 s).")
 
@@ -154,15 +157,20 @@ elseif action == "setpower" then
   local watt = math.floor(kw * 1000 + (kw >= 0 and 0.5 or -0.5))
   local hi, lo = split_s32(watt)
   set_active()
+  print("44100=1 -> " .. mb_write(R_DISPATCH, 1)); pause()
   print("44280=4 -> " .. mb_write(R_PORTSEL, 4)); pause()
   print(string.format("44282=%d -> %s", hi, mb_write(R_PWR_HI, hi))); pause()
   print(string.format("44283=%d (%.2f kW) -> %s", lo, kw, mb_write(R_PWR_LO, lo)))
   print("Sollwert gesendet. Failsafe-Guard aktiv (60 s).")
 
 elseif action == "standby" then
+  -- 44100 bewusst NICHT zuruecksetzen: das ist laut Doku der gemeinsame
+  -- Hauptschalter fuer den GESAMTEN Bereich 44100-44199 - dort liegt auch
+  -- das Netzbezug-Limit-Feature (44100-44104). Faellt dieses Standby, waere
+  -- sonst potenziell auch ein parallel aktives Netzbezug-Limit betroffen.
   print("44280=0 -> " .. mb_write(R_PORTSEL, 0))
   clear_active()
-  print("Fernsteuerung deaktiviert.")
+  print("Fernsteuerung deaktiviert (44100 bewusst unveraendert gelassen, siehe Kommentar).")
 
 elseif action == "heartbeat" then
   -- WICHTIG: anders als beim BLUESUN/UDAN-EMS (kein eigener Timeout) hat
@@ -173,7 +181,8 @@ elseif action == "heartbeat" then
   -- waehrend der Sollwert im Register stehen bleibt (Learning 2026-09-18).
   heartbeat()
   if io.open(ACTIVE, "r") then
-    print("Refresh -> " .. mb_write(R_PORTSEL, 4))
+    print("Refresh 44100 -> " .. mb_write(R_DISPATCH, 1)); pause()
+    print("Refresh 44280 -> " .. mb_write(R_PORTSEL, 4))
   else
     print("OK:heartbeat (inaktiv, kein Refresh)")
   end
