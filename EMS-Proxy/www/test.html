@@ -48,7 +48,8 @@ details.learn code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px;
 
 <p class="warn">Diese Seite spricht die Geraete DIREKT an (nicht ueber den Proxy).
 Der Proxy kann waehrenddessen im Passthrough weiterlaufen.
-Schreibbefehle gehen NUR an das BLUESUN/UDAN-EMS. Alle anderen Geraete sind read-only.</p>
+Schreibbefehle gehen an das BLUESUN/UDAN-EMS (Abschnitt 3) und an den Solis (Abschnitt 6).
+Alle anderen Geraete sind read-only.</p>
 
 <div>
   <button id="emergency">NOT-AUS (BLUESUN Standby + 0 kW)</button>
@@ -221,6 +222,26 @@ Wird vervollstaendigt, sobald der genaue Geraetetyp feststeht.</small></p>
 <pre id="smw_out">(noch keine Ausgabe)</pre>
 </fieldset>
 
+<fieldset>
+<legend><b>6. Solis S6 Hybrid - Batterie-Sollwert (Schreibziel!)</b> (IP aus Setup: Solis EMS IP)</legend>
+<p>Stufenloser Schieberegler, <b>+ = Laden, - = Entladen</b> (Solis-eigene Vorzeichenkonvention,
+kein Umrechnen noetig). Register ist in Watt - Limit hier bewusst in <b>kW</b> gehalten (nicht
+Ampere), weil die Batteriespannung mit dem Ladezustand schwankt und eine Ampere-Vorgabe die
+Sicherheitsgrenze ungenau machen wuerde. Nur EIN Sollwert-Register unabhaengig davon, ob 1 oder 2
+Batterie-Anschluesse verkabelt sind (Solis-Sonderfall: kombinierter Anschluss = doppelter Bereich).</p>
+<label><input type="checkbox" id="sol_confirm"> Ich weiss, dass ich am ECHTEN Geraet schreibe</label><br>
+<button id="sol_status">Status lesen (read-only)</button>
+<button id="sol_init">Init (Fernsteuerung an)</button>
+<button id="sol_standby">Standby (Fernsteuerung aus)</button><br>
+Sollwert (kW): <input type="range" id="sol_slider" min="-10" max="10" step="0.1" value="0" style="width:300px;vertical-align:middle;">
+<b id="sol_kw_display">0.0 kW</b><br>
+<small id="sol_limit_note">Limit wird aus der Konfiguration geladen ...</small>
+<p><small>Mindestens 700 ms Abstand zwischen Schreibbefehlen (Herstellervorgabe fuer Steuerframes).
+Failsafe: Nach einem Schreibbefehl sendet die Seite alle 15 s einen Heartbeat. Bleibt er 60 s aus,
+setzt der Router die Fernsteuerung automatisch zurueck (zusaetzlich zum geraeteeigenen Timeout).</small></p>
+<pre id="sol_out">(noch keine Ausgabe)</pre>
+</fieldset>
+
 <script>
 var testActive = false;
 
@@ -262,23 +283,97 @@ document.getElementById("bs_standby").addEventListener("click", function () {
   testActive = false;
   bsCall("action=standby", "bs_out");
 });
+var solisTestActive = false;
+
+function solCall(params, outId) {
+  return fetch("/cgi-bin/test_solis.cgi?" + params)
+    .then(function (r) { return r.text(); })
+    .then(function (t) { out(outId, t); return t; })
+    .catch(function (e) { out(outId, "ERR:fetch " + e); });
+}
+
+function solConfirmed() {
+  if (!document.getElementById("sol_confirm").checked) {
+    out("sol_out", "Abgebrochen: Bestaetigungs-Checkbox nicht gesetzt.");
+    return false;
+  }
+  return true;
+}
+
 document.getElementById("emergency").addEventListener("click", function () {
   testActive = false;
   bsCall("action=standby", "bs_out");
+  solisTestActive = false;
+  solCall("action=standby", "sol_out");
 });
 
 setInterval(function () {
+  var msgs = [];
   if (testActive) {
     fetch("/cgi-bin/test_bluesun.cgi?action=heartbeat").catch(function () {});
-    document.getElementById("guard_state").innerText = "Testmodus AKTIV - Heartbeat laeuft";
-    document.getElementById("guard_state").className = "warn";
+    msgs.push("BLUESUN AKTIV");
+  }
+  if (solisTestActive) {
+    fetch("/cgi-bin/test_solis.cgi?action=heartbeat").catch(function () {});
+    msgs.push("Solis AKTIV");
+  }
+  var el = document.getElementById("guard_state");
+  if (msgs.length > 0) {
+    el.innerText = "Testmodus: " + msgs.join(", ") + " - Heartbeat laeuft";
+    el.className = "warn";
   } else {
-    document.getElementById("guard_state").innerText = "";
+    el.innerText = "";
   }
 }, 15000);
 
 window.addEventListener("beforeunload", function () {
   if (testActive) navigator.sendBeacon && navigator.sendBeacon("/cgi-bin/test_bluesun.cgi?action=standby");
+  if (solisTestActive) navigator.sendBeacon && navigator.sendBeacon("/cgi-bin/test_solis.cgi?action=standby");
+});
+
+document.getElementById("sol_status").addEventListener("click", function () {
+  solCall("action=status", "sol_out");
+});
+document.getElementById("sol_init").addEventListener("click", function () {
+  if (!solConfirmed()) return;
+  solisTestActive = true;
+  solCall("action=init&confirm=1", "sol_out");
+});
+document.getElementById("sol_standby").addEventListener("click", function () {
+  solisTestActive = false;
+  document.getElementById("sol_slider").value = 0;
+  document.getElementById("sol_kw_display").innerText = "0.0 kW";
+  solCall("action=standby", "sol_out");
+});
+
+var solMaxKw = 10;
+(function () {
+  fetch("/cgi-bin/get_param.cgi?name=solis_test_max_kw").then(function (r) { return r.text(); })
+    .then(function (v) {
+      var n = parseFloat(v);
+      if (!isNaN(n) && n > 0) solMaxKw = n;
+      var slider = document.getElementById("sol_slider");
+      slider.min = -solMaxKw; slider.max = solMaxKw;
+      document.getElementById("sol_limit_note").innerText =
+        "Limit: +/-" + solMaxKw + " kW (aus /etc/tesvolt_solis_test_max_kw)";
+    }).catch(function () {});
+})();
+
+var solSliderPending = false;
+document.getElementById("sol_slider").addEventListener("input", function () {
+  document.getElementById("sol_kw_display").innerText = parseFloat(this.value).toFixed(1) + " kW";
+});
+document.getElementById("sol_slider").addEventListener("change", function () {
+  // "change" statt "input": Schreibbefehl geht erst beim Loslassen raus,
+  // nicht bei jeder Zwischenposition - haelt den >=700ms-Mindestabstand
+  // von selbst ein, ohne eigene Drossel-Logik.
+  if (!solConfirmed()) { this.value = 0; document.getElementById("sol_kw_display").innerText = "0.0 kW"; return; }
+  if (solSliderPending) return;
+  solSliderPending = true;
+  solisTestActive = true;
+  var kw = parseFloat(this.value);
+  solCall("action=setpower&confirm=1&kw=" + encodeURIComponent(kw), "sol_out")
+    .then(function () { solSliderPending = false; });
 });
 
 function genericRead(ip, port, unit, fc, addr, outId) {

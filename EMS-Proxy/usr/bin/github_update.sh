@@ -111,6 +111,7 @@ cp "$SRC/usr/bin/ems_watchdog.sh"   "$BIN/" || fail "copy ems_watchdog.sh"
 cp "$SRC/usr/bin/mb_cli.lua"        "$BIN/" || fail "copy mb_cli.lua"
 [ -f "$SRC/usr/bin/github_update.sh" ] && cp "$SRC/usr/bin/github_update.sh" "$BIN/"
 [ -f "$SRC/usr/bin/bluesun_test_guard.sh" ] && cp "$SRC/usr/bin/bluesun_test_guard.sh" "$BIN/"
+[ -f "$SRC/usr/bin/solis_test_guard.sh" ]   && cp "$SRC/usr/bin/solis_test_guard.sh"   "$BIN/"
 [ -f "$SRC/usr/bin/profile_loader.lua" ] && cp "$SRC/usr/bin/profile_loader.lua" "$BIN/"
 [ -f "$SRC/usr/bin/device_poll.lua" ]    && cp "$SRC/usr/bin/device_poll.lua"    "$BIN/"
 [ -f "$SRC/usr/bin/sunspec_diag.lua" ]   && cp "$SRC/usr/bin/sunspec_diag.lua"   "$BIN/"
@@ -142,7 +143,7 @@ done
 for base in ip_t ip_b cap_t cap_b proxy_mode split_mode proxy_registers sim proxy_enabled \
             grid_max_chg grid_max_dis grid_use_ems test_max_kw \
             ems_source ip_dm unit_dm ip_sma ip_ems_t ip_ems_s en_t en_b en_sma \
-            dev_poll_interval griddraw_en griddraw_kw; do
+            dev_poll_interval griddraw_en griddraw_kw solis_test_max_kw; do
     f="/etc/tesvolt_$base"
     [ -f "$f" ] || touch "$f"
     if chown uhttpd:uhttpd "$f" 2>/dev/null; then
@@ -170,6 +171,7 @@ log "Konfigdatei-Rechte fuer uhttpd-User gesetzt (inkl. Geraeteslots dev1-dev4)"
 # --- 4. Rechte ---------------------------------------------------------------
 chmod +x "$BIN"/modbus_proxy.lua "$BIN"/powersplit.lua "$BIN"/mb_cli.lua \
          "$BIN"/ems_watchdog.sh "$BIN"/github_update.sh "$BIN"/bluesun_test_guard.sh \
+         "$BIN"/solis_test_guard.sh \
          "$BIN"/profile_loader.lua "$BIN"/device_poll.lua "$BIN"/sunspec_diag.lua \
          "$BIN"/sniff_parse.lua \
          /etc/init.d/ems_watchdog "$WEB"/cgi-bin/*.cgi 2>/dev/null
